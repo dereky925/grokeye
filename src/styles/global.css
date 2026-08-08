@@ -540,6 +540,76 @@ video {
   border-color: rgba(157, 255, 176, 0.35);
 }
 
+/* Pointer arrow that pops in at a found object — sits outside the top-right
+   corner aiming into the box; .flip mirrors it to the bottom-left when the
+   box is near the top/right edge. */
+.video-highlight-pointer {
+  position: absolute;
+  left: calc(100% - 4px);
+  bottom: calc(100% - 4px);
+  width: 30px;
+  height: 30px;
+  animation:
+    pointer-in 0.32s cubic-bezier(0.2, 0.9, 0.2, 1) both,
+    pointer-bob 1.1s 0.32s ease-in-out infinite;
+}
+
+.video-highlight-pointer svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  stroke: rgba(157, 255, 176, 0.95);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  fill: none;
+  filter: drop-shadow(0 0 6px rgba(157, 255, 176, 0.55));
+}
+
+.video-highlight-pointer.flip {
+  left: auto;
+  bottom: auto;
+  right: calc(100% - 4px);
+  top: calc(100% - 4px);
+  animation:
+    pointer-in 0.32s cubic-bezier(0.2, 0.9, 0.2, 1) both,
+    pointer-bob-flip 1.1s 0.32s ease-in-out infinite;
+}
+
+.video-highlight-pointer.flip svg {
+  transform: rotate(180deg);
+}
+
+@keyframes pointer-in {
+  from {
+    opacity: 0;
+    transform: translate(10px, -10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes pointer-bob {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-5px, 5px);
+  }
+}
+
+@keyframes pointer-bob-flip {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(5px, -5px);
+  }
+}
+
 /* Connection arrow between two tracked callouts. */
 .video-highlight-arrows {
   position: absolute;

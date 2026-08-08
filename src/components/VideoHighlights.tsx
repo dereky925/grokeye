@@ -253,6 +253,21 @@ export default function VideoHighlights({
                 <span className="video-highlight-corner br" />
               </>
             )}
+            {label.kind === "box" &&
+              !sourceIds.has(label.id) &&
+              !targetIds.has(label.id) && (
+                <span
+                  className={`video-highlight-pointer${
+                    label.y < 0.15 || label.x + label.w > 0.88 ? " flip" : ""
+                  }`}
+                >
+                  <svg viewBox="0 0 26 26" aria-hidden>
+                    <line x1="22" y1="4" x2="10" y2="16" />
+                    <line x1="10" y1="16" x2="16.8" y2="14.2" />
+                    <line x1="10" y1="16" x2="11.8" y2="9.2" />
+                  </svg>
+                </span>
+              )}
             <span className="video-highlight-leader" />
             <span className="video-highlight-label">{label.text}</span>
           </div>
