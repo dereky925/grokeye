@@ -20,6 +20,7 @@ import {
   applyManualAction,
   fetchManual,
   parseManualAction,
+  snapPosition,
   speakText,
 } from "../lib/manual";
 import { snapCommand } from "../lib/commands";
@@ -70,6 +71,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sessionRef = useRef(0);
   const manualRef = useRef<ManualOverlayState | null>(null);
+  const toolsRef = useRef<ToolsState | null>(null);
   const resumeAfterHighlightRef = useRef(false);
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
@@ -86,6 +88,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     manualRef.current = manual;
   }, [manual]);
+
+  useEffect(() => {
+    toolsRef.current = tools;
+  }, [tools]);
 
   const [micArmed, setMicArmed] = useState(true);
   const [listenActivity, setListenActivity] = useState(0);
@@ -197,15 +203,36 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
       try {
         const open = Boolean(manualRef.current);
+        const toolsOpen = Boolean(toolsRef.current);
         // Exact regex first; fall back to fuzzy command snapping over all
         // recognition alternatives to recover misheard controls.
         const action =
-          parseManualAction(heard, open) ??
+          parseManualAction(heard, open, toolsOpen) ??
           snapCommand([heard, ...alternatives], open);
 
         if (action) {
-          // Navigating the manual invalidates any tools shown for the old step.
-          setTools(null);
+          // Moving the tools panel is its own thing — never touch the manual.
+          if (action.type === "move_overlay" && action.target === "tools") {
+            const current = toolsRef.current;
+            if (current) {
+              const { x, y } = snapPosition(
+                action.snap,
+                current.x,
+                current.y,
+                168,
+                260,
+              );
+              const next = { ...current, x, y };
+              setTools(next);
+              toolsRef.current = next;
+            }
+            return;
+          }
+
+          // Changing steps invalidates any tools shown for the old step, but
+          // repositioning the manual leaves them valid.
+          if (action.type !== "move_overlay") setTools(null);
+
           if (action.type === "open_manual") {
             const topic = action.topic || video.title || "sushi";
             const loading: ManualOverlayState = {
@@ -258,7 +285,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
           const stepNumber = m ? m.stepIndex + 1 : null;
           const topic = m ? m.doc.topic : video.title;
 
-          setTools({ tools: [], stepNumber, loading: true });
+          const toolsX = toolsRef.current?.x ?? 16;
+          const toolsY = toolsRef.current?.y ?? 150;
+          setTools({
+            tools: [],
+            stepNumber,
+            loading: true,
+            x: toolsX,
+            y: toolsY,
+          });
 
           let found;
           try {
@@ -274,7 +309,13 @@ export default function VideoPlayer({ video, onBack }: Props) {
             throw err;
           }
           if (sessionId !== sessionRef.current) return;
-          setTools({ tools: found, stepNumber, loading: false });
+          setTools({
+            tools: found,
+            stepNumber,
+            loading: false,
+            x: toolsX,
+            y: toolsY,
+          });
 
           const summary = found.length
             ? `You'll need ${listPhrase(found.map((t) => t.name))}.`
@@ -605,7 +646,21 @@ export default function VideoPlayer({ video, onBack }: Props) {
       )}
 
       {tools && (
-        <ToolsOverlay state={tools} onClose={() => setTools(null)} />
+        <ToolsOverlay
+          state={tools}
+          onChangePosition={(x, y) => {
+            setTools((t) => {
+              if (!t) return t;
+              const next = { ...t, x, y };
+              toolsRef.current = next;
+              return next;
+            });
+          }}
+          onClose={() => {
+            setTools(null);
+            toolsRef.current = null;
+          }}
+        />
       )}
 
       <VoiceBubble
