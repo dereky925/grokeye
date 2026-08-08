@@ -1268,6 +1268,56 @@ function keyNoun(query) {
   return words[words.length - 1] || "";
 }
 
+function hasWord(text, word) {
+  if (!word) return false;
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+}
+
+/**
+ * A substring check let "Dog with hammer.jpg" through for "hammer". Require the
+ * key noun as a whole word AND that at least half of the candidate's meaningful
+ * words come from the query, so hits that are mostly about something else lose.
+ */
+function nameLooksLikeTool(candidate, query, need) {
+  const clean = (s) => s.toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  const text = clean(candidate);
+  if (!hasWord(text, need)) return false;
+  const queryWords = new Set(clean(query).split(" ").filter((w) => w.length >= 3));
+  const tokens = text.split(" ").filter((w) => w.length >= 3);
+  if (!tokens.length) return false;
+  const matched = tokens.filter((w) => queryWords.has(w)).length;
+  return matched / tokens.length >= 0.5;
+}
+
+/**
+ * Wikipedia's lead image for the tool's article — the most reliable "what this
+ * tool looks like" source, so it runs before any file search.
+ */
+async function wikipediaImageUrl(query, requiredWord = "") {
+  try {
+    const api = `https://en.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(
+      query,
+    )}&gsrlimit=4&prop=pageimages&piprop=thumbnail&pithumbsize=320&format=json`;
+    const r = await fetch(api, { headers: { "User-Agent": IMG_UA } });
+    const data = await r.json();
+    const need = (requiredWord || keyNoun(query)).toLowerCase();
+    const pages = Object.values(data?.query?.pages || {}).sort(
+      (a, b) => (a.index ?? 99) - (b.index ?? 99),
+    );
+    for (const page of pages) {
+      const url = page?.thumbnail?.source;
+      if (!url) continue;
+      // The article must be about the tool, not merely mention it.
+      if (need && !hasWord(String(page?.title || ""), need)) continue;
+      return toDisplayableImageUrl(url);
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
 /** Find a reliable, hotlink-safe image for a tool via Wikimedia Commons search. */
 async function commonsImageUrl(query, requiredWord = "") {
   try {
@@ -1283,7 +1333,7 @@ async function commonsImageUrl(query, requiredWord = "") {
         .replace(/^File:/, "")
         .trim();
       if (!file || !/\.(png|jpe?g|webp)$/i.test(file)) continue;
-      if (need && !file.toLowerCase().includes(need)) continue;
+      if (!nameLooksLikeTool(file.replace(/\.\w+$/, ""), query, need)) continue;
       return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(
         file,
       )}?width=320`;
@@ -1309,8 +1359,8 @@ async function openverseImageUrl(query, requiredWord = "") {
       if (typeof item?.url !== "string" || !/^https:\/\//i.test(item.url)) {
         continue;
       }
-      const label = `${item?.title || ""} ${item?.url}`.toLowerCase();
-      if (need && !label.includes(need)) continue;
+      // Match on the title only — URLs are full of incidental word hits.
+      if (!nameLooksLikeTool(String(item?.title || ""), query, need)) continue;
       return item.url;
     }
     return "";
@@ -1343,6 +1393,16 @@ async function resolveToolImages(tools) {
 
       // A URL from the model is guesswork, so it has to be verified.
       if (tool.imageUrl && (await imageWorks(tool.imageUrl))) return;
+
+      // Wikipedia article lead images are curated, canonical shots of the
+      // tool — try them before trawling raw file search results.
+      for (const query of dedupe([tool.name, twoWord])) {
+        const url = await wikipediaImageUrl(query, need);
+        if (url) {
+          tool.imageUrl = url;
+          return;
+        }
+      }
 
       // Commons URLs are built from real search hits, so the file is known to
       // exist — verifying it would just add a throttled round trip. Queries run
@@ -1407,6 +1467,7 @@ app.post("/api/step-tools", async (req, res) => {
     const stepText = String(req.body?.stepText || "").trim();
     const stepNumber = Number(req.body?.stepNumber) || null;
     const videoTitle = String(req.body?.videoTitle || "").trim();
+    const videoDescription = String(req.body?.videoDescription || "").trim();
 
     const focus = stepText || topic || videoTitle;
     if (!focus) {
@@ -1424,10 +1485,13 @@ app.post("/api/step-tools", async (req, res) => {
 
     const prompt = [
       topic ? `Task: ${topic}.` : "",
+      videoDescription ? `Video description: ${videoDescription.slice(0, 400)}` : "",
       stepText
         ? `The user is on this step${stepNumber ? ` (step ${stepNumber})` : ""}: "${stepText}".`
         : "",
-      "List the physical tools/equipment needed to do this specific step.",
+      stepText
+        ? "List the physical tools/equipment needed to do this specific step."
+        : "List the physical tools/equipment needed to do this task. If the task is not a hands-on job, list the few most plausible tools for what the video shows.",
       "Use the common, generic name for each tool (e.g. 'socket wrench', not a brand or part number) so it is easy to picture.",
       "Return ONLY valid JSON matching this schema:",
       JSON.stringify({
