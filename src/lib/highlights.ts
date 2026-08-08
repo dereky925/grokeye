@@ -1,4 +1,4 @@
-import type { HighlightLabel } from "../types";
+import type { HighlightKind, HighlightLabel, HighlightLink } from "../types";
 
 export type VideoContentRect = {
   /** Content box relative to the video element. */
@@ -53,6 +53,7 @@ export function normalizeLabels(
     if (!item || typeof item !== "object") continue;
     const o = item as Record<string, unknown>;
     const text = String(o.text || o.label || "").trim().slice(0, 40);
+    const kind: HighlightKind = o.kind === "zone" ? "zone" : "box";
     let x = Number(o.x);
     let y = Number(o.y);
     let w = Number(o.w ?? o.width);
@@ -65,7 +66,7 @@ export function normalizeLabels(
     if (x + w > 1) w = 1 - x;
     if (y + h > 1) h = 1 - y;
     if (w < 0.04 || h < 0.04) continue;
-    out.push({ text, x, y, w, h });
+    out.push({ text, kind, x, y, w, h });
     if (out.length >= max) break;
   }
   return out;
@@ -76,6 +77,24 @@ export function withLabelIds(
 ): HighlightLabel[] {
   const t = Date.now();
   return labels.map((l, i) => ({ ...l, id: `hl-${t}-${i}` }));
+}
+
+/** Validate a model-returned link (label indices) against placed labels. */
+export function normalizeLink(
+  raw: unknown,
+  labels: HighlightLabel[],
+): HighlightLink[] {
+  if (!raw || typeof raw !== "object") return [];
+  const o = raw as Record<string, unknown>;
+  const from = Number(o.from);
+  const to = Number(o.to);
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) {
+    return [];
+  }
+  const a = labels[from];
+  const b = labels[to];
+  if (!a || !b) return [];
+  return [{ fromId: a.id, toId: b.id }];
 }
 
 /** Letterboxed content rect inside an object-fit: contain video element. */
@@ -103,6 +122,7 @@ export function getVideoContentRect(
 type TrackTarget = {
   id: string;
   text: string;
+  kind: HighlightKind;
   box: { x: number; y: number; w: number; h: number };
   grayT: Float32Array;
   edgeT: Float32Array;
@@ -392,6 +412,7 @@ export function createHighlightTracker(
   const targets: TrackTarget[] = labels.map((l) => ({
     id: l.id,
     text: l.text,
+    kind: l.kind,
     box: { x: l.x, y: l.y, w: l.w, h: l.h },
     grayT: extractFieldPatch(gray0, gw, gh, l.x, l.y, l.w, l.h, TEMPL, TEMPL),
     edgeT: extractFieldPatch(edge0, gw, gh, l.x, l.y, l.w, l.h, TEMPL, TEMPL),
@@ -410,14 +431,19 @@ export function createHighlightTracker(
       if (!el.videoWidth) return labels;
 
       if (el.paused) {
-        return targets.map((t) => ({ id: t.id, text: t.text, ...t.box }));
+        return targets.map((t) => ({
+          id: t.id,
+          text: t.text,
+          kind: t.kind,
+          ...t.box,
+        }));
       }
 
       const now = performance.now();
       if (now - lastTs < minDt) {
         return targets
           .filter((t) => t.misses < MAX_MISSES)
-          .map((t) => ({ id: t.id, text: t.text, ...t.box }));
+          .map((t) => ({ id: t.id, text: t.text, kind: t.kind, ...t.box }));
       }
       lastTs = now;
 
@@ -432,7 +458,7 @@ export function createHighlightTracker(
         if (!hit) {
           t.misses += 1;
           if (t.misses < MAX_MISSES) {
-            alive.push({ id: t.id, text: t.text, ...t.box });
+            alive.push({ id: t.id, text: t.text, kind: t.kind, ...t.box });
           }
           continue;
         }
@@ -483,7 +509,7 @@ export function createHighlightTracker(
           blendTemplate(t.hist, hPatch, 0.06);
         }
 
-        alive.push({ id: t.id, text: t.text, ...t.box });
+        alive.push({ id: t.id, text: t.text, kind: t.kind, ...t.box });
       }
       return alive.length ? alive : null;
     },

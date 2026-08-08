@@ -80,8 +80,9 @@ app.post("/api/chat", async (req, res) => {
         ? [
             "Also return visual callouts for the most relevant object(s) in the frame.",
             "Respond with ONLY valid JSON (no markdown) matching:",
-            '{"reply":"spoken answer under 3 sentences","labels":[{"text":"short label","x":0,"y":0,"w":0,"h":0}]}',
+            '{"reply":"spoken answer under 3 sentences","labels":[{"text":"short label","kind":"box","x":0,"y":0,"w":0,"h":0}]}',
             "Box fields are normalized 0–1 with origin at the top-left of the image (x,y = top-left of the box; w,h = size).",
+            'kind is "box" for a discrete object or "zone" for a region/area.',
             "Use at most 2 labels. Tight boxes around the referenced subject(s). Empty labels array if nothing clear to highlight.",
             "reply is what will be spoken aloud — keep it natural and do not mention coordinates.",
           ].join(" ")

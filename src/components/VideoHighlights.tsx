@@ -4,11 +4,13 @@ import {
   getVideoContentRect,
   type VideoContentRect,
 } from "../lib/highlights";
-import type { HighlightLabel } from "../types";
+import type { HighlightLabel, HighlightLink } from "../types";
 
 type Props = {
   videoRef: RefObject<HTMLVideoElement | null>;
   labels: HighlightLabel[];
+  /** Arrows drawn between tracked labels (endpoints follow the tracker). */
+  links?: HighlightLink[];
   onLabelsChange: (labels: HighlightLabel[]) => void;
   /** Soft-expire callouts after this many ms. */
   maxMs?: number;
@@ -16,9 +18,32 @@ type Props = {
   minHoldMs?: number;
 };
 
+/** Point where the center-to-center line exits `box`, plus a small gap. */
+function arrowEndpoint(
+  box: HighlightLabel,
+  dx: number,
+  dy: number,
+  planeW: number,
+  planeH: number,
+  gap: number,
+) {
+  const cx = (box.x + box.w / 2) * planeW;
+  const cy = (box.y + box.h / 2) * planeH;
+  const halfW = (box.w / 2) * planeW;
+  const halfH = (box.h / 2) * planeH;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const tx = ux !== 0 ? halfW / Math.abs(ux) : Infinity;
+  const ty = uy !== 0 ? halfH / Math.abs(uy) : Infinity;
+  const t = Math.min(tx, ty) + gap;
+  return { x: cx + ux * t, y: cy + uy * t };
+}
+
 export default function VideoHighlights({
   videoRef,
   labels,
+  links = [],
   onLabelsChange,
   maxMs = 14000,
   minHoldMs = 7000,
@@ -150,6 +175,22 @@ export default function VideoHighlights({
 
   if (!labels.length || !content) return null;
 
+  const byId = new Map(labels.map((l) => [l.id, l]));
+  const sourceIds = new Set(links.map((l) => l.fromId));
+  const targetIds = new Set(links.map((l) => l.toId));
+  const arrows = links.flatMap((link) => {
+    const from = byId.get(link.fromId);
+    const to = byId.get(link.toId);
+    if (!from || !to) return [];
+    const dx = (to.x + to.w / 2 - (from.x + from.w / 2)) * content.width;
+    const dy = (to.y + to.h / 2 - (from.y + from.h / 2)) * content.height;
+    const p1 = arrowEndpoint(from, dx, dy, content.width, content.height, 6);
+    const p2 = arrowEndpoint(to, -dx, -dy, content.width, content.height, 10);
+    // Boxes overlap or touch — no room for a readable arrow.
+    if (Math.hypot(p2.x - p1.x, p2.y - p1.y) < 24) return [];
+    return [{ id: `${link.fromId}-${link.toId}`, p1, p2 }];
+  });
+
   return (
     <div
       className={`video-highlights ${leaving ? "is-leaving" : ""}`}
@@ -167,7 +208,13 @@ export default function VideoHighlights({
         {labels.map((label, i) => (
           <div
             key={label.id}
-            className="video-highlight"
+            className={`video-highlight kind-${label.kind}${
+              targetIds.has(label.id)
+                ? " is-target"
+                : sourceIds.has(label.id)
+                  ? " is-source"
+                  : ""
+            }`}
             style={{
               left: `${label.x * 100}%`,
               top: `${label.y * 100}%`,
@@ -176,10 +223,62 @@ export default function VideoHighlights({
               animationDelay: `${i * 60}ms`,
             }}
           >
-            <span className="video-highlight-ring" />
+            {label.kind === "zone" ? (
+              <span className="video-highlight-zone" />
+            ) : (
+              <>
+                <span className="video-highlight-ring" />
+                <span className="video-highlight-corner tl" />
+                <span className="video-highlight-corner tr" />
+                <span className="video-highlight-corner bl" />
+                <span className="video-highlight-corner br" />
+              </>
+            )}
+            <span className="video-highlight-leader" />
             <span className="video-highlight-label">{label.text}</span>
           </div>
         ))}
+        {arrows.length > 0 && (
+          <svg
+            className="video-highlight-arrows"
+            width={content.width}
+            height={content.height}
+            viewBox={`0 0 ${content.width} ${content.height}`}
+          >
+            <defs>
+              <marker
+                id="hl-arrowhead"
+                markerWidth="7"
+                markerHeight="6"
+                refX="5.5"
+                refY="3"
+                orient="auto"
+                markerUnits="strokeWidth"
+              >
+                <path d="M0,0 L7,3 L0,6 Z" className="video-highlight-arrowhead" />
+              </marker>
+            </defs>
+            {arrows.map((a) => (
+              <g key={a.id}>
+                <line
+                  className="video-highlight-arrow-glow"
+                  x1={a.p1.x}
+                  y1={a.p1.y}
+                  x2={a.p2.x}
+                  y2={a.p2.y}
+                />
+                <line
+                  className="video-highlight-arrow"
+                  x1={a.p1.x}
+                  y1={a.p1.y}
+                  x2={a.p2.x}
+                  y2={a.p2.y}
+                  markerEnd="url(#hl-arrowhead)"
+                />
+              </g>
+            ))}
+          </svg>
+        )}
       </div>
     </div>
   );

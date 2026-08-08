@@ -361,15 +361,78 @@ video {
   animation: highlight-in 0.38s cubic-bezier(0.2, 0.9, 0.2, 1) both;
 }
 
+/* Faint full outline so the box extent stays readable behind the brackets. */
 .video-highlight-ring {
   position: absolute;
   inset: 0;
-  border: 2px solid rgba(245, 248, 255, 0.92);
-  border-radius: 10px;
-  box-shadow:
-    0 0 0 1px rgba(0, 0, 0, 0.35),
-    0 0 28px rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(245, 248, 255, 0.28);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+/* AR reticle: four corner brackets with a soft glow. */
+.video-highlight-corner {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(245, 248, 255, 0.95);
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.45));
   animation: highlight-pulse 1.8s ease-in-out infinite;
+}
+
+.video-highlight-corner.tl {
+  top: -2px;
+  left: -2px;
+  border-right: none;
+  border-bottom: none;
+  border-top-left-radius: 8px;
+}
+
+.video-highlight-corner.tr {
+  top: -2px;
+  right: -2px;
+  border-left: none;
+  border-bottom: none;
+  border-top-right-radius: 8px;
+}
+
+.video-highlight-corner.bl {
+  bottom: -2px;
+  left: -2px;
+  border-right: none;
+  border-top: none;
+  border-bottom-left-radius: 8px;
+}
+
+.video-highlight-corner.br {
+  bottom: -2px;
+  right: -2px;
+  border-left: none;
+  border-top: none;
+  border-bottom-right-radius: 8px;
+}
+
+/* Region callout: soft fill instead of a reticle. */
+.video-highlight-zone {
+  position: absolute;
+  inset: 0;
+  border: 1.5px dashed rgba(245, 248, 255, 0.7);
+  border-radius: 12px;
+  background: rgba(245, 248, 255, 0.1);
+  box-shadow:
+    inset 0 0 24px rgba(255, 255, 255, 0.1),
+    0 0 0 1px rgba(0, 0, 0, 0.25);
+  animation: highlight-pulse 2.2s ease-in-out infinite;
+}
+
+/* Short leader line tying the label chip to the reticle. */
+.video-highlight-leader {
+  position: absolute;
+  left: 12px;
+  bottom: 100%;
+  width: 1.5px;
+  height: 8px;
+  background: rgba(245, 248, 255, 0.6);
 }
 
 .video-highlight-label {
@@ -412,6 +475,93 @@ video {
   }
   50% {
     opacity: 0.72;
+  }
+}
+
+/* Arrow destination gets the accent color so source → target reads instantly. */
+.video-highlight.is-target .video-highlight-corner {
+  border-color: rgba(157, 255, 176, 0.95);
+  filter: drop-shadow(0 0 6px rgba(157, 255, 176, 0.5));
+}
+
+.video-highlight.is-target .video-highlight-ring {
+  border-color: rgba(157, 255, 176, 0.3);
+}
+
+.video-highlight.is-target .video-highlight-leader {
+  background: rgba(157, 255, 176, 0.6);
+}
+
+.video-highlight.is-target .video-highlight-label {
+  border-color: rgba(157, 255, 176, 0.35);
+}
+
+/* Connection arrow between two tracked callouts. */
+.video-highlight-arrows {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.video-highlight-arrow {
+  stroke: rgba(245, 248, 255, 0.92);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 7 7;
+  animation: arrow-flow 0.8s linear infinite;
+}
+
+.video-highlight-arrow-glow {
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+
+.video-highlight-arrowhead {
+  fill: rgba(245, 248, 255, 0.95);
+}
+
+@keyframes arrow-flow {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+
+/* Scan sweep shown on the frozen frame while Grok locates objects. */
+.video-scan {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  pointer-events: none;
+  overflow: hidden;
+  animation: fade-in 0.24s ease both;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.video-scan-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -20%;
+  height: 16%;
+  background: linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.1) 45%,
+    rgba(245, 248, 255, 0.22) 78%,
+    rgba(255, 255, 255, 0.55) 100%
+  );
+  box-shadow: 0 2px 18px rgba(255, 255, 255, 0.25);
+  animation: scan-sweep 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes scan-sweep {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(760%);
   }
 }
 

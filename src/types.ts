@@ -40,12 +40,22 @@ export type ManualOverlayState = {
   loading?: boolean;
 };
 
+/** "box" = object reticle; "zone" = soft-filled region (areas, not things). */
+export type HighlightKind = "box" | "zone";
+
 /** Axis-aligned box in normalized video frame coords (origin top-left, 0–1). */
 export type HighlightLabel = {
   id: string;
   text: string;
+  kind: HighlightKind;
   x: number;
   y: number;
   w: number;
   h: number;
+};
+
+/** Arrow drawn between two tracked labels ("where does this cable go?"). */
+export type HighlightLink = {
+  fromId: string;
+  toId: string;
 };
