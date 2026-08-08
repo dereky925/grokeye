@@ -3,6 +3,20 @@ import Dashboard from "./components/Dashboard";
 import VideoPlayer from "./components/VideoPlayer";
 import type { VideoItem } from "./types";
 
+/**
+ * Not in the server manifest — there is no file behind it. The player swaps the
+ * <video> source for the USB webcam when it sees `live`.
+ */
+const LIVE_CAMERA: VideoItem = {
+  id: "live",
+  title: "Live Camera",
+  description: "Point the webcam at whatever you're working on and ask Grok.",
+  src: "",
+  thumbnail: "",
+  durationSeconds: 0,
+  live: true,
+};
+
 export default function App() {
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +59,7 @@ export default function App() {
         <VideoPlayer video={active} onBack={() => setActive(null)} />
       ) : (
         <Dashboard
-          videos={videos}
+          videos={[LIVE_CAMERA, ...videos]}
           loading={loading}
           error={error}
           onSelect={setActive}

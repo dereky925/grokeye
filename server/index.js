@@ -624,41 +624,32 @@ async function resolveToolImages(tools) {
   await Promise.all(
     tools.map(async (tool) => {
       const [twoWord, oneWord] = shortenQuery(tool.name);
-
-      // Look candidates up concurrently, then accept the first that actually
-      // serves an image, in priority order.
       const need = keyNoun(tool.name);
+      const dedupe = (queries) => [...new Set(queries.filter(Boolean))];
 
-      // Commons nearly always wins, so only pay for Openverse if it doesn't.
-      const tiers = [
-        [
-          tool.imageUrl ? Promise.resolve(tool.imageUrl) : Promise.resolve(""),
-          commonsImageUrl(tool.name, need),
-          twoWord ? commonsImageUrl(twoWord, need) : Promise.resolve(""),
-          oneWord
-            ? commonsImageUrl(`${oneWord} tool`, need)
-            : Promise.resolve(""),
-        ],
-        [
-          () => openverseImageUrl(tool.name, need),
-          () => (oneWord ? openverseImageUrl(`${oneWord} tool`, need) : ""),
-        ],
-      ];
+      // A URL from the model is guesswork, so it has to be verified.
+      if (tool.imageUrl && (await imageWorks(tool.imageUrl))) return;
 
-      for (const tier of tiers) {
-        const lookups = tier.map((entry) =>
-          typeof entry === "function" ? entry() : entry,
-        );
-        const candidates = (await Promise.all(lookups)).filter(Boolean);
-        const verified = await Promise.all(
-          candidates.map((url) => imageWorks(url).then((ok) => (ok ? url : ""))),
-        );
-        const winner = verified.find(Boolean);
-        if (winner) {
-          tool.imageUrl = winner;
+      // Commons URLs are built from real search hits, so the file is known to
+      // exist — verifying it would just add a throttled round trip. Queries run
+      // narrowest-first and stop at the first hit.
+      for (const query of dedupe([tool.name, twoWord, oneWord && `${oneWord} tool`])) {
+        const url = await commonsImageUrl(query, need);
+        if (url) {
+          tool.imageUrl = url;
           return;
         }
       }
+
+      // Last resort is an arbitrary third-party host, so verify this one.
+      for (const query of dedupe([tool.name, oneWord && `${oneWord} tool`])) {
+        const url = await openverseImageUrl(query, need);
+        if (url && (await imageWorks(url))) {
+          tool.imageUrl = url;
+          return;
+        }
+      }
+
       tool.imageUrl = "";
     }),
   );
@@ -785,6 +776,180 @@ app.post("/api/tools", async (req, res) => {
     console.error(err);
     res.status(500).json({
       error: err instanceof Error ? err.message : "Tool lookup failed",
+    });
+  }
+});
+
+const GHOST_PRIMITIVES = new Set([
+  "slide",
+  "lift",
+  "insert",
+  "rotate",
+  "press",
+  "pull",
+]);
+
+function clampUnit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return NaN;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
+ * Force the model's answer into the exact contract the client animates from.
+ * Anything unusable degrades rather than throws: a bad box becomes null (the
+ * client then shows the trail alone) and an unknown primitive becomes a slide.
+ */
+function normalizeGhost(parsed) {
+  const obj = parsed?.object || {};
+  const rawBox = obj.box || {};
+
+  let box = {
+    x: clampUnit(rawBox.x),
+    y: clampUnit(rawBox.y),
+    w: clampUnit(rawBox.w ?? rawBox.width),
+    h: clampUnit(rawBox.h ?? rawBox.height),
+  };
+  if (
+    ![box.x, box.y, box.w, box.h].every(Number.isFinite) ||
+    box.w < 0.04 ||
+    box.h < 0.04
+  ) {
+    box = null;
+  } else {
+    if (box.x + box.w > 1) box.w = 1 - box.x;
+    if (box.y + box.h > 1) box.h = 1 - box.y;
+  }
+
+  const motion = parsed?.motion || {};
+  const primitive = GHOST_PRIMITIVES.has(String(motion.primitive))
+    ? String(motion.primitive)
+    : "slide";
+
+  const center = box
+    ? { x: box.x + box.w / 2, y: box.y + box.h / 2 }
+    : { x: 0.5, y: 0.5 };
+  const toX = clampUnit(motion?.to?.x);
+  const toY = clampUnit(motion?.to?.y);
+
+  let rotateDeg = Number(motion.rotateDeg);
+  if (!Number.isFinite(rotateDeg)) rotateDeg = 0;
+  rotateDeg = Math.max(-180, Math.min(180, rotateDeg));
+
+  return {
+    label: String(obj.label || obj.name || "").trim().slice(0, 40) || "this",
+    caption: String(parsed?.caption || "").trim().slice(0, 120),
+    box,
+    motion: {
+      primitive,
+      to: {
+        x: Number.isFinite(toX) ? toX : center.x,
+        y: Number.isFinite(toY) ? toY : center.y,
+      },
+      rotateDeg,
+    },
+  };
+}
+
+/**
+ * Only in-flight dedupe here, no result cache: the answer is geometry for one
+ * specific frame, so a cached box would be wrong the moment playback moves.
+ */
+const ghostInflight = new Map();
+
+app.post("/api/ghost", async (req, res) => {
+  try {
+    const question = String(req.body?.question || "").trim();
+    const frame = String(req.body?.frame || "");
+    const videoTitle = String(req.body?.videoTitle || "").trim();
+    const stepText = String(req.body?.stepText || "").trim();
+
+    if (!question) {
+      return res.status(400).json({ error: "question is required" });
+    }
+    if (!frame.startsWith("data:image")) {
+      return res.status(400).json({ error: "a frame image is required" });
+    }
+
+    const key = `${question}::${stepText}`.toLowerCase().replace(/\s+/g, " ");
+    if (ghostInflight.has(key)) {
+      return res.json(await ghostInflight.get(key));
+    }
+
+    const system = [
+      "You plan ONE physical motion for a tool or part visible in a video frame.",
+      "The user will see a translucent ghost of that object animate along the motion you describe, over the paused frame.",
+      "Pick the single object the question is about and locate it in the image.",
+      "Return ONLY valid JSON (no markdown) matching:",
+      '{"object":{"label":"short name","box":{"x":0,"y":0,"w":0,"h":0}},"motion":{"primitive":"slide","to":{"x":0,"y":0},"rotateDeg":0},"caption":"short imperative sentence"}',
+      "All coordinates are normalized 0-1 with origin at the top-left of the image.",
+      "box.x/box.y is the TOP-LEFT corner of a tight box around the object; box.w/box.h is its size.",
+      "motion.to is the CENTER position the object should end up at.",
+      "primitive must be exactly one of: slide, lift, insert, rotate, press, pull.",
+      "Match the real motion: slide to move along a surface, lift to raise, insert to push into place, rotate to turn (set rotateDeg, negative for counter-clockwise), press to push down, pull to draw away.",
+      "For rotate, motion.to may equal the object's current center.",
+      "caption is under 12 words and describes the motion, not the object.",
+      videoTitle ? `Video: ${videoTitle}.` : "",
+      stepText ? `The user is on this step: "${stepText}".` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const job = (async () => {
+      const startedAt = Date.now();
+      const response = await fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "grok-4.5",
+          temperature: 0.2,
+          messages: [
+            { role: "system", content: system },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Viewer question: ${question}\nReturn the JSON for the attached frame.`,
+                },
+                // Latency here is reasoning-bound, not image-token-bound, so
+                // high detail buys box precision at no measurable cost.
+                { type: "image_url", image_url: { url: frame, detail: "high" } },
+              ],
+            },
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.error("Ghost error:", data);
+        throw new Error(data?.error?.message || "Ghost planning failed");
+      }
+
+      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+      const out = normalizeGhost(parseManualJson(raw));
+      console.log(
+        `[ghost] ${out.motion.primitive} "${out.label}" box=${
+          out.box ? "ok" : "NONE"
+        } in ${Date.now() - startedAt}ms`,
+      );
+      return out;
+    })();
+
+    ghostInflight.set(key, job);
+    try {
+      res.json(await job);
+    } finally {
+      ghostInflight.delete(key);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Ghost planning failed",
     });
   }
 });

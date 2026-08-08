@@ -26,23 +26,28 @@ export default function Dashboard({
         <h1>Grok-Enhanced Reality.</h1>
       </section>
 
-      {loading && <p className="loading">Loading videos…</p>}
       {error && <div className="error-banner">{error}</div>}
 
-      {!loading && !error && (
+      {(!loading || videos.some((v) => v.live)) && (
         <div className="video-grid">
           {videos.map((video, index) => (
             <button
               key={video.id}
               type="button"
-              className="video-card"
+              className={`video-card ${video.live ? "live" : ""}`}
               style={{ animationDelay: `${index * 60}ms` }}
               onClick={() => onSelect(video)}
             >
               <div className="video-thumb">
-                <img src={video.thumbnail} alt="" />
-                <span className="video-duration">
-                  {formatDuration(video.durationSeconds)}
+                {video.live ? (
+                  <div className="live-thumb" aria-hidden>
+                    <span className="live-thumb-icon" />
+                  </div>
+                ) : (
+                  <img src={video.thumbnail} alt="" />
+                )}
+                <span className={`video-duration ${video.live ? "live" : ""}`}>
+                  {video.live ? "LIVE" : formatDuration(video.durationSeconds)}
                 </span>
               </div>
               <div className="video-meta">
@@ -53,6 +58,8 @@ export default function Dashboard({
           ))}
         </div>
       )}
+
+      {loading && <p className="loading">Loading videos…</p>}
     </div>
   );
 }
