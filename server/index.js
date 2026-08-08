@@ -33,6 +33,23 @@ function formatTime(seconds) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+// Replies feed TTS + the caption chip directly — markdown reads aloud as garbage.
+function stripSpokenMarkdown(text) {
+  return String(text)
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_\n]+)_/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*•]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/[*_#`]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 async function runLocalDetect({ image, pack, query }) {
   if (!(await detectorHealthy())) {
     await ensureDetector();
@@ -170,11 +187,15 @@ app.post("/api/chat", async (req, res) => {
     const usedLocalBoxes = labels.length > 0;
 
     const system = [
-      "You are Grok, built by xAI. Speak in short, clear spoken answers.",
+      "You are Grok, built by xAI. Your reply is spoken aloud over a video — be blunt and to the point.",
+      "Answer in 1–2 short sentences by default; use a 3rd only if the answer truly needs it.",
+      "No preamble, no filler, no restating the question, no hedging, no wrap-up pleasantries. Lead with the answer itself.",
+      "Your output goes straight to text-to-speech: plain spoken prose only. Never use markdown, asterisks, bold, headings, bullet points, numbered lists, or emoji — formatting characters get read aloud as garbage.",
       "The user is watching a video in GrokEye and talking through a voice overlay.",
       hasFrames
-        ? "The user asked something about the video/screen. Frame(s) and playback timing are attached — ground your answer in what is visible. If something isn't visible, say so briefly."
-        : "No video frame is attached for this turn. Answer from general knowledge and the video title/description if useful. Do not pretend you can see the screen unless frames are provided.",
+        ? "The user asked something about the video/screen. Frame(s) and playback timing are attached — commit to your best read of the frame and answer decisively. Never lead with what you can't see or can't tell. If a detail genuinely isn't in frame, coach the best expert move anyway and tuck any caveat into a few trailing words — it is never the headline."
+        : "No video frame is attached for this turn. Answer decisively from general knowledge and the video title/description. Don't claim to see the screen, but don't dwell on that either — just answer.",
+      "Be supremely confident — a master tradesman who has seen this a thousand times. Banned openers: 'I can't tell', 'I can't see', 'I don't know', 'it's hard to say', 'it depends'. Make the call and own it; when you're inferring rather than seeing, phrase it as direct coaching ('keep the flame on the fitting') instead of an assessment you couldn't make.",
       labelMode && usedLocalBoxes
         ? [
             "A local open-vocab detector already found object boxes for this frame.",
@@ -186,14 +207,14 @@ app.post("/api/chat", async (req, res) => {
           ? [
               "Also return visual callouts for the most relevant object(s) in the frame.",
               "Respond with ONLY valid JSON (no markdown) matching:",
-              '{"reply":"spoken answer under 3 sentences","labels":[{"text":"short label","kind":"box","x":0,"y":0,"w":0,"h":0}]}',
+              '{"reply":"blunt spoken answer, 1-2 short sentences","labels":[{"text":"short label","kind":"box","x":0,"y":0,"w":0,"h":0}]}',
               "Box fields are normalized 0–1 with origin at the top-left of the image (x,y = top-left of the box; w,h = size).",
               'kind is "box" for a discrete object or "zone" for a region/area.',
               "Use at most 2 labels. Tight boxes around the referenced subject(s). Empty labels array if nothing clear to highlight.",
               "reply is what will be spoken aloud — keep it natural and do not mention coordinates.",
             ].join(" ")
-          : "Keep replies under about 3 sentences unless asked for more detail.",
-      "Be helpful, a bit witty, and direct.",
+          : "Go longer than 2 sentences only when the user explicitly asks for more detail.",
+      "A dry quip is fine when it costs zero extra words; never pad.",
       videoTitle ? `Video title: ${videoTitle}.` : "",
       videoDescription ? `Video description: ${videoDescription}.` : "",
       hasFrames && Number.isFinite(currentTime)
@@ -275,7 +296,7 @@ app.post("/api/chat", async (req, res) => {
     }
 
     res.json({
-      reply,
+      reply: stripSpokenMarkdown(reply) || reply,
       labels,
       model,
       frameCount: frames.length,
