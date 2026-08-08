@@ -3,6 +3,7 @@ import VoiceBubble from "./VoiceBubble";
 import MiniSpotify from "./MiniSpotify";
 import MiniTwitter from "./MiniTwitter";
 import ManualOverlay from "./ManualOverlay";
+import ToolsOverlay from "./ToolsOverlay";
 import VideoHighlights from "./VideoHighlights";
 import {
   askGrok,
@@ -23,13 +24,17 @@ import {
   applyManualAction,
   fetchManual,
   parseManualAction,
+  snapPosition,
   speakText,
 } from "../lib/manual";
+import { snapCommand } from "../lib/commands";
+import { fetchTools, listPhrase, wantsTools } from "../lib/tools";
 import { parseSpotifyAction } from "../lib/spotify";
 import { parseTwitterAction } from "../lib/twitter";
 import type {
   HighlightLabel,
   ManualOverlayState,
+  ToolsState,
   VideoItem,
   VoicePhase,
 } from "../types";
@@ -81,6 +86,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sessionRef = useRef(0);
   const manualRef = useRef<ManualOverlayState | null>(null);
+  const toolsRef = useRef<ToolsState | null>(null);
   const resumeAfterHighlightRef = useRef(false);
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
@@ -89,6 +95,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [ttsAudio, setTtsAudio] = useState<HTMLAudioElement | null>(null);
   const [usedVision, setUsedVision] = useState(false);
   const [manual, setManual] = useState<ManualOverlayState | null>(null);
+  const [tools, setTools] = useState<ToolsState | null>(null);
   const [highlights, setHighlights] = useState<HighlightLabel[]>([]);
   const [detecting, setDetecting] = useState(false);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
@@ -109,6 +116,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     manualRef.current = manual;
   }, [manual]);
+
+  useEffect(() => {
+    toolsRef.current = tools;
+  }, [tools]);
 
   const [micArmed, setMicArmed] = useState(true);
   const [listenActivity, setListenActivity] = useState(0);
@@ -208,24 +219,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
     }
   }, [stopTts]);
 
-  const playSpoken = useCallback(
-    async (text: string, sessionId: number) => {
-      lastSpokenRef.current = text;
-      setMicArmed(false);
-      setReply(text);
-      setPhase("speaking");
-      const audioUrl = await speakText(text);
-      if (sessionId !== sessionRef.current) {
-        URL.revokeObjectURL(audioUrl);
-        return;
-      }
-      await playAudioUrl(audioUrl, sessionId);
-    },
-    [playAudioUrl],
-  );
-
   const handleQuestion = useCallback(
-    async (heard: string) => {
+    async (heard: string, alternatives: string[] = []) => {
       const sessionId = ++sessionRef.current;
       const el = videoRef.current;
       setTranscript(heard);
@@ -343,9 +338,36 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
 
         const open = Boolean(manualRef.current);
-        const action = parseManualAction(heard, open);
+        const toolsOpen = Boolean(toolsRef.current);
+        // Exact regex first; fall back to fuzzy command snapping over all
+        // recognition alternatives to recover misheard controls.
+        const action =
+          parseManualAction(heard, open, toolsOpen) ??
+          snapCommand([heard, ...alternatives], open);
 
         if (action) {
+          // Moving the tools panel is its own thing — never touch the manual.
+          if (action.type === "move_overlay" && action.target === "tools") {
+            const current = toolsRef.current;
+            if (current) {
+              const { x, y } = snapPosition(
+                action.snap,
+                current.x,
+                current.y,
+                168,
+                260,
+              );
+              const next = { ...current, x, y };
+              setTools(next);
+              toolsRef.current = next;
+            }
+            return;
+          }
+
+          // Changing steps invalidates any tools shown for the old step, but
+          // repositioning the manual leaves them valid.
+          if (action.type !== "move_overlay") setTools(null);
+
           if (action.type === "open_manual") {
             const topic = action.topic || video.title || "sushi";
             const loading: ManualOverlayState = {
@@ -371,7 +393,6 @@ export default function VideoPlayer({ video, onBack }: Props) {
             };
             setManual(loading);
             manualRef.current = loading;
-            setReply("One sec…");
 
             const doc = await fetchManual({
               topic,
@@ -379,17 +400,70 @@ export default function VideoPlayer({ video, onBack }: Props) {
               videoDescription: video.description,
             });
             if (sessionId !== sessionRef.current) return;
+            // Panel-only: update the overlay, no spoken readout or center text.
             const result = applyManualAction(manualRef.current, action, doc);
             setManual(result.state);
             manualRef.current = result.state;
-            await playSpoken(result.speak, sessionId);
             return;
           }
 
+          // Panel-only: update the overlay, no spoken readout or center text.
           const result = applyManualAction(manualRef.current, action);
           setManual(result.state);
           manualRef.current = result.state;
-          await playSpoken(result.speak, sessionId);
+          return;
+        }
+
+        if (wantsTools(heard)) {
+          const m = manualRef.current;
+          const stepText = m ? m.doc.steps[m.stepIndex]?.text : undefined;
+          const stepNumber = m ? m.stepIndex + 1 : null;
+          const topic = m ? m.doc.topic : video.title;
+
+          const toolsX = toolsRef.current?.x ?? 16;
+          const toolsY = toolsRef.current?.y ?? 150;
+          setTools({
+            tools: [],
+            stepNumber,
+            loading: true,
+            x: toolsX,
+            y: toolsY,
+          });
+
+          let found;
+          try {
+            found = await fetchTools({
+              topic,
+              stepText,
+              stepNumber,
+              videoTitle: video.title,
+            });
+          } catch (err) {
+            if (sessionId !== sessionRef.current) return;
+            setTools(null);
+            throw err;
+          }
+          if (sessionId !== sessionRef.current) return;
+          setTools({
+            tools: found,
+            stepNumber,
+            loading: false,
+            x: toolsX,
+            y: toolsY,
+          });
+
+          const summary = found.length
+            ? `You'll need ${listPhrase(found.map((t) => t.name))}.`
+            : "I couldn't find the tools for this step.";
+          lastSpokenRef.current = summary;
+          setMicArmed(false);
+          setPhase("speaking");
+          try {
+            const url = await speakText(summary);
+            await playAudioUrl(url, sessionId);
+          } catch {
+            /* audio is optional — cards are already shown */
+          }
           return;
         }
 
@@ -514,7 +588,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
       }
     },
-    [armMicSoon, playAudioUrl, playSpoken, spotify, twitter, video.description, video.detectorPack, video.title],
+    [
+      armMicSoon,
+      playAudioUrl,
+      spotify,
+      twitter,
+      video.description,
+      video.detectorPack,
+      video.title,
+    ],
   );
 
   const { supported, micLive, interim, startCommand } = useGrokListener({
@@ -527,7 +609,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setPhase("listening");
       if (videoRef.current) videoRef.current.volume = 0.02;
     },
-    onQuestion: (text) => {
+    onQuestion: (text, alternatives) => {
       if (looksLikeEcho(text, lastSpokenRef.current)) {
         console.log("[voice] ignoring likely TTS echo:", text);
         setPhase("idle");
@@ -535,7 +617,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
         return;
       }
-      void handleQuestion(text);
+      void handleQuestion(text, alternatives);
     },
   });
 
@@ -736,6 +818,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
           onClose={() => {
             setManual(null);
             manualRef.current = null;
+          }}
+        />
+      )}
+
+      {tools && (
+        <ToolsOverlay
+          state={tools}
+          onChangePosition={(x, y) => {
+            setTools((t) => {
+              if (!t) return t;
+              const next = { ...t, x, y };
+              toolsRef.current = next;
+              return next;
+            });
+          }}
+          onClose={() => {
+            setTools(null);
+            toolsRef.current = null;
           }}
         />
       )}

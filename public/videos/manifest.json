@@ -7,5 +7,13 @@
     "thumbnail": "/videos/sushi-thumb.jpg",
     "durationSeconds": 20,
     "detectorPack": "sushi"
+  },
+  {
+    "id": "tesla",
+    "title": "Tesla Repair",
+    "description": "A DIY mechanic pulling the rear drive unit on a Tesla in the driveway.",
+    "src": "/videos/tesla.mp4",
+    "thumbnail": "/videos/tesla-thumb.jpg",
+    "durationSeconds": 394
   }
 ]

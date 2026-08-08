@@ -10,3 +10,4 @@ detector/**/__pycache__
 *.pt
 *.onnx
 .ultralytics
+*.tsbuildinfo

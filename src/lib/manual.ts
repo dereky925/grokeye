@@ -10,13 +10,16 @@ export type OverlaySnap =
   | "bottom-left"
   | "bottom-right";
 
+/** Which floating panel a move command is aimed at. */
+export type OverlayTarget = "manual" | "tools";
+
 export type ManualAction =
   | { type: "open_manual"; topic?: string }
   | { type: "close_manual" }
   | { type: "next_step" }
   | { type: "prev_step" }
   | { type: "goto_step"; step: number }
-  | { type: "move_overlay"; snap: OverlaySnap }
+  | { type: "move_overlay"; snap: OverlaySnap; target: OverlayTarget }
   | { type: "read_step" }
   | null;
 
@@ -42,12 +45,102 @@ function parseStepNum(raw: string): number | null {
 }
 
 /**
+ * Screen coordinates for a snap target, sized to the panel being moved so it
+ * lands flush against the edge. Falls back to the current position for axes the
+ * snap doesn't constrain.
+ */
+export function snapPosition(
+  snap: OverlaySnap,
+  currentX: number,
+  currentY: number,
+  panelWidth: number,
+  panelHeight: number,
+): { x: number; y: number } {
+  const pad = 16;
+  const panelW = Math.min(panelWidth, window.innerWidth - 24);
+  const maxX = Math.max(pad, window.innerWidth - panelW - pad);
+  const maxY = Math.max(pad, window.innerHeight - panelHeight - pad);
+  const midX = Math.round((pad + maxX) / 2);
+
+  switch (snap) {
+    case "left":
+    case "top-left":
+      return { x: pad, y: pad };
+    case "right":
+    case "top-right":
+      return { x: maxX, y: pad };
+    case "bottom-left":
+      return { x: pad, y: maxY };
+    case "bottom-right":
+      return { x: maxX, y: maxY };
+    case "top":
+      return { x: midX, y: pad };
+    case "bottom":
+      return { x: midX, y: maxY };
+    default:
+      return { x: currentX, y: currentY };
+  }
+}
+
+/**
+ * Snap-to-edge parsing for "move the tools panel to the right" style commands.
+ * Resolves which panel is meant so one panel's move never drags the other.
+ */
+function parseMoveAction(
+  t: string,
+  manualOpen: boolean,
+  toolsOpen: boolean,
+): ManualAction {
+  const wantsMove =
+    /\b(move|slide|shift|drag|nudge|push|snap|put|place)\b/.test(t) ||
+    /\b(to the |go )(left|right|top|bottom|up|down)\b/.test(t) ||
+    (/\b(manual|guide|overlay|panel|pane|window|it)\b/.test(t) &&
+      /\b(left|right|top|bottom|up|down)\b/.test(t));
+  if (!wantsMove) return null;
+
+  const wantsBottom = /\b(bottom|lower)\b/.test(t);
+  const wantsTop = /\b(top|upper)\b/.test(t);
+  const wantsLeft = /\bleft\b/.test(t);
+  const wantsRight = /\bright\b/.test(t);
+  const wantsUp = /\b(up|upwards?)\b/.test(t);
+  const wantsDown = /\b(down|downwards?)\b/.test(t);
+
+  let snap: OverlaySnap | null = null;
+  if (wantsLeft && wantsBottom) snap = "bottom-left";
+  else if (wantsRight && wantsBottom) snap = "bottom-right";
+  else if (wantsLeft && wantsTop) snap = "top-left";
+  else if (wantsRight && wantsTop) snap = "top-right";
+  else if (wantsLeft) snap = "left"; // top-left by default
+  else if (wantsRight) snap = "right"; // top-right by default
+  else if (wantsUp || (wantsTop && !wantsBottom)) snap = "top";
+  else if (wantsDown || wantsBottom) snap = "bottom";
+  if (!snap) return null;
+
+  const saysTools = /\b(tools?|equipment)\b/.test(t);
+  const saysManual = /\b(manual|guide|instructions?|recipe|steps?)\b/.test(t);
+
+  // Explicitly named panel wins; if it isn't open, do nothing rather than
+  // yanking the other one around.
+  if (saysTools && !saysManual) {
+    return toolsOpen ? { type: "move_overlay", snap, target: "tools" } : null;
+  }
+  if (saysManual && !saysTools) {
+    return manualOpen ? { type: "move_overlay", snap, target: "manual" } : null;
+  }
+
+  // Unqualified ("move it left") — aim at whichever panel is open, manual first.
+  const target: OverlayTarget = manualOpen ? "manual" : "tools";
+  return { type: "move_overlay", snap, target };
+}
+
+/**
  * Fast local router for manual overlay voice control.
  * Returns null when the utterance should fall through to normal Grok Q&A.
  */
 export function parseManualAction(
   message: string,
   manualOpen: boolean,
+  toolsOpen = false,
 ): ManualAction {
   const t = message.toLowerCase().replace(/[’”]/g, "'").trim();
   if (!t) return null;
@@ -70,14 +163,18 @@ export function parseManualAction(
     return { type: "open_manual" };
   }
   if (
-    /\b(how (do i|to) (make|roll|prepare)|walk me through|teach me|guide me)\b/.test(
+    /\b(how (do (i|you|we)|to|does (one|it))\b|walk me through|talk me through|teach me|guide me|show me how|help me (make|build|fix|repair|do|replace|install)|steps? (for|to)|instructions? (for|to))\b/.test(
       t,
     )
   ) {
     return { type: "open_manual" };
   }
-  if (/\bsushi\b/.test(t) && /\b(manual|guide|instructions?|recipe|steps?)\b/.test(t)) {
-    return { type: "open_manual", topic: "sushi" };
+
+  // Snap a panel to a screen edge / corner. Parsed before the manual-open gate
+  // so the tools panel can be moved on its own.
+  if (manualOpen || toolsOpen) {
+    const move = parseMoveAction(t, manualOpen, toolsOpen);
+    if (move) return move;
   }
 
   if (!manualOpen) return null;
@@ -92,9 +189,10 @@ export function parseManualAction(
   }
 
   if (
-    /\b(previous( step)?|prev( step)?|go back|back( a step)?|last step)\b/.test(
+    /\b(previous(?:\s+(step|one))?|prev(?:\s+step)?|go back|back(?:\s+(a\s+step|up|one))?|last step)\b/.test(
       t,
-    )
+    ) ||
+    /^(previous|back)[.!?]?$/.test(t)
   ) {
     return { type: "prev_step" };
   }
@@ -105,34 +203,6 @@ export function parseManualAction(
   if (goto) {
     const step = parseStepNum(goto[1]);
     if (step) return { type: "goto_step", step };
-  }
-
-  // Snap to screen edges / corners. Default left/right → top corners.
-  const wantsMove =
-    /\b(move|slide|shift|drag|nudge|push|snap|put|place)\b/.test(t) ||
-    /\b(to the |go )(left|right|top|bottom|up|down)\b/.test(t) ||
-    (/\b(manual|guide|overlay|panel|window|it)\b/.test(t) &&
-      /\b(left|right|top|bottom|up|down)\b/.test(t));
-
-  if (wantsMove) {
-    const wantsBottom = /\b(bottom|lower)\b/.test(t);
-    const wantsTop = /\b(top|upper)\b/.test(t);
-    const wantsLeft = /\bleft\b/.test(t);
-    const wantsRight = /\bright\b/.test(t);
-    const wantsUp = /\b(up|upwards?)\b/.test(t);
-    const wantsDown = /\b(down|downwards?)\b/.test(t);
-
-    let snap: OverlaySnap | null = null;
-    if (wantsLeft && wantsBottom) snap = "bottom-left";
-    else if (wantsRight && wantsBottom) snap = "bottom-right";
-    else if (wantsLeft && wantsTop) snap = "top-left";
-    else if (wantsRight && wantsTop) snap = "top-right";
-    else if (wantsLeft) snap = "left"; // top-left by default
-    else if (wantsRight) snap = "right"; // top-right by default
-    else if (wantsUp || (wantsTop && !wantsBottom)) snap = "top";
-    else if (wantsDown || wantsBottom) snap = "bottom";
-
-    if (snap) return { type: "move_overlay", snap };
   }
 
   if (
@@ -217,43 +287,7 @@ export function applyManualAction(
     }
     case "move_overlay": {
       if (!state) return { state, speak: "No manual is open." };
-      const pad = 16;
-      const panelW = Math.min(280, window.innerWidth - 24);
-      const panelH = 220;
-      const maxX = Math.max(pad, window.innerWidth - panelW - pad);
-      const maxY = Math.max(pad, window.innerHeight - panelH - pad);
-      const midX = Math.round((pad + maxX) / 2);
-
-      let x = state.x;
-      let y = state.y;
-      switch (action.snap) {
-        case "left":
-        case "top-left":
-          x = pad;
-          y = pad;
-          break;
-        case "right":
-        case "top-right":
-          x = maxX;
-          y = pad;
-          break;
-        case "bottom-left":
-          x = pad;
-          y = maxY;
-          break;
-        case "bottom-right":
-          x = maxX;
-          y = maxY;
-          break;
-        case "top":
-          x = midX;
-          y = pad;
-          break;
-        case "bottom":
-          x = midX;
-          y = maxY;
-          break;
-      }
+      const { x, y } = snapPosition(action.snap, state.x, state.y, 280, 220);
 
       const label =
         action.snap === "left"

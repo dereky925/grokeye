@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type SpeechRecognitionLike = {
   continuous: boolean;
   interimResults: boolean;
+  maxAlternatives: number;
   lang: string;
   start: () => void;
   stop: () => void;
@@ -13,12 +14,14 @@ type SpeechRecognitionLike = {
   onstart: (() => void) | null;
 };
 
+type RecognitionAlternative = { transcript: string; confidence: number };
+type RecognitionResult = ArrayLike<RecognitionAlternative> & {
+  isFinal: boolean;
+};
+
 type SpeechRecognitionEventLike = {
   resultIndex: number;
-  results: ArrayLike<{
-    isFinal: boolean;
-    0: { transcript: string };
-  }>;
+  results: ArrayLike<RecognitionResult>;
 };
 
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
@@ -61,7 +64,7 @@ function cleanUtterance(text: string) {
 export function useGrokListener(options: {
   enabled: boolean;
   onSpeechStart: () => void;
-  onQuestion: (text: string) => void;
+  onQuestion: (text: string, alternatives?: string[]) => void;
   onInterim?: (text: string) => void;
 }): VoiceListenState {
   const { enabled, onSpeechStart, onQuestion, onInterim } = options;
@@ -75,6 +78,7 @@ export function useGrokListener(options: {
   const onQuestionRef = useRef(onQuestion);
   const onInterimRef = useRef(onInterim);
   const bufferRef = useRef("");
+  const lastFinalAltsRef = useRef<string[]>([]);
   const silenceTimerRef = useRef<number | null>(null);
   const restartTimerRef = useRef<number | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -101,10 +105,14 @@ export function useGrokListener(options: {
   const finishUtterance = useCallback(() => {
     clearSilence();
     const text = cleanUtterance(bufferRef.current);
+    const alts = lastFinalAltsRef.current
+      .map((a) => cleanUtterance(a))
+      .filter(Boolean);
     bufferRef.current = "";
+    lastFinalAltsRef.current = [];
     setInterim("");
     setModeBoth("idle");
-    if (text) onQuestionRef.current(text);
+    if (text) onQuestionRef.current(text, alts);
   }, [clearSilence, setModeBoth]);
 
   const bumpSilenceWatch = useCallback(() => {
@@ -122,6 +130,7 @@ export function useGrokListener(options: {
   const beginCapture = useCallback(() => {
     if (modeRef.current === "capturing") return;
     bufferRef.current = "";
+    lastFinalAltsRef.current = [];
     setInterim("");
     setModeBoth("capturing");
     onSpeechStartRef.current();
@@ -165,6 +174,7 @@ export function useGrokListener(options: {
     const recognition = new Ctor();
     recognition.continuous = true;
     recognition.interimResults = true;
+    recognition.maxAlternatives = 4;
     recognition.lang = "en-US";
     recognitionRef.current = recognition;
 
@@ -183,9 +193,19 @@ export function useGrokListener(options: {
       let interimChunk = "";
       let finalChunk = "";
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const piece = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalChunk += `${piece} `;
-        else interimChunk += piece;
+        const result = event.results[i];
+        const piece = result[0].transcript;
+        if (result.isFinal) {
+          finalChunk += `${piece} `;
+          const alts: string[] = [];
+          for (let a = 0; a < result.length; a += 1) {
+            const tr = result[a]?.transcript;
+            if (tr) alts.push(tr);
+          }
+          lastFinalAltsRef.current = alts;
+        } else {
+          interimChunk += piece;
+        }
       }
 
       const live = cleanUtterance(`${finalChunk} ${interimChunk}`);
