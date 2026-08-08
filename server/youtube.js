@@ -88,7 +88,7 @@ function toVideo(item, score) {
     publishedAt,
     thumbnail: thumb,
     url: `https://www.youtube.com/watch?v=${id}`,
-    embedUrl: `https://www.youtube.com/embed/${id}?autoplay=1`,
+    embedUrl: `https://www.youtube.com/embed/${id}?autoplay=1&controls=0&modestbranding=1&rel=0&iv_load_policy=3&playsinline=1`,
     channelTitle: item.snippet?.channelTitle || "SpaceX",
     score,
   };
@@ -250,14 +250,194 @@ export async function findStarshipWebcast() {
   return { video: best, videos: ranked, source };
 }
 
+function decodeYtText(s = "") {
+  return String(s)
+    .replace(/\\u0026/g, "&")
+    .replace(/\\u003c/g, "<")
+    .replace(/\\u003e/g, ">")
+    .replace(/\\"/g, '"')
+    .replace(/\\n/g, " ")
+    .trim();
+}
+
+/** Pull a short plain string field; never allow leaked JSON. */
+function cleanLabel(s = "", maxLen = 120) {
+  let t = decodeYtText(s);
+  // If scrape went past the quote, cut at first raw JSON marker
+  const cut = t.search(/","|"\}|":\{/);
+  if (cut > 0) t = t.slice(0, cut);
+  t = t.replace(/\s+/g, " ").trim();
+  if (t.length > maxLen) t = `${t.slice(0, maxLen - 1)}…`;
+  return t;
+}
+
+/**
+ * Fallback search via YouTube results page when Data API is missing/blocked.
+ */
+async function searchViaHtml(query, maxResults = 8) {
+  const url = new URL("https://www.youtube.com/results");
+  url.searchParams.set("search_query", query);
+  url.searchParams.set("hl", "en");
+  url.searchParams.set("gl", "US");
+
+  const r = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+  });
+  if (!r.ok) {
+    const err = new Error(`YouTube search page ${r.status}`);
+    err.status = r.status;
+    throw err;
+  }
+
+  const html = await r.text();
+  const m = html.match(/ytInitialData\s*=\s*(\{.+?\});<\/script>/s);
+  if (!m) {
+    const err = new Error("Could not parse YouTube search results");
+    err.status = 502;
+    throw err;
+  }
+
+  /** @type {{id:string,title:string,channelTitle:string}[]} */
+  const found = [];
+  const seen = new Set();
+  const chunk = m[1];
+
+  // Split on videoRenderer so title/channel stay in the same card.
+  const blocks = chunk.split('"videoRenderer":');
+  for (const block of blocks) {
+    if (found.length >= maxResults) break;
+    const idM = block.match(/^\{"videoId":"([a-zA-Z0-9_-]{11})"/);
+    if (!idM) continue;
+    const id = idM[1];
+    if (seen.has(id)) continue;
+
+    const titleM = block.match(/"title":\{"runs":\[\{"text":"([^"]+)"/);
+    const channelM =
+      block.match(
+        /"(?:ownerText|longBylineText|shortBylineText)":\{"runs":\[\{"text":"([^"]+)"/,
+      ) || block.match(/"canonicalBaseUrl":"\/@([^"]+)"/);
+
+    const title = cleanLabel(titleM?.[1] || "");
+    if (!title) continue;
+
+    seen.add(id);
+    found.push({
+      id,
+      title,
+      channelTitle: cleanLabel(channelM?.[1] || "YouTube", 80),
+    });
+  }
+
+  // Looser scrape if nested regex missed
+  if (!found.length) {
+    const ids = [...chunk.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)].map(
+      (x) => x[1],
+    );
+    const titles = [
+      ...chunk.matchAll(/"title":\{"runs":\[\{"text":"([^"]+)"/g),
+    ].map((x) => cleanLabel(x[1]));
+    for (let i = 0; i < ids.length && found.length < maxResults; i++) {
+      const id = ids[i];
+      if (seen.has(id)) continue;
+      seen.add(id);
+      found.push({
+        id,
+        title: titles[i] || `YouTube video ${id}`,
+        channelTitle: "YouTube",
+      });
+    }
+  }
+
+  return found.map((v) =>
+    toVideo(
+      {
+        videoId: v.id,
+        title: v.title,
+        description: "",
+        thumbnail: `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+        snippet: { channelTitle: v.channelTitle },
+      },
+      0,
+    ),
+  );
+}
+
+export async function searchYoutube(query, { maxResults = 8 } = {}) {
+  const q = String(query || "").trim();
+  if (!q) {
+    const err = new Error("Search query required");
+    err.status = 400;
+    throw err;
+  }
+
+  const limit = Math.min(15, Math.max(1, maxResults));
+
+  if (YOUTUBE_API_KEY) {
+    try {
+      const url = new URL("https://www.googleapis.com/youtube/v3/search");
+      url.searchParams.set("part", "snippet");
+      url.searchParams.set("q", q);
+      url.searchParams.set("type", "video");
+      url.searchParams.set("order", "relevance");
+      url.searchParams.set("maxResults", String(limit));
+      url.searchParams.set("safeSearch", "none");
+      url.searchParams.set("key", YOUTUBE_API_KEY);
+
+      const r = await fetch(url);
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        const videos = (data.items || [])
+          .map((item) => toVideo(item, 0))
+          .filter(Boolean);
+        if (videos.length) {
+          return {
+            query: q,
+            video: videos[0],
+            videos,
+            source: "youtube-data-api",
+          };
+        }
+      }
+    } catch {
+      // fall through to HTML search
+    }
+  }
+
+  const videos = await searchViaHtml(q, limit);
+  if (!videos.length) {
+    const err = new Error(`No YouTube videos found for “${q}”`);
+    err.status = 404;
+    throw err;
+  }
+
+  return { query: q, video: videos[0], videos, source: "youtube-html" };
+}
+
 /** @param {import('express').Express} app */
 export function mountYoutubeRoutes(app) {
   app.get("/api/youtube/status", (_req, res) => {
     res.json({
-      configured: true, // RSS always works; API key unlocks better search
+      configured: true, // RSS always works for Starship; API key unlocks search
       hasApiKey: youtubeConfigured(),
       channelId: SPACEX_CHANNEL_ID,
     });
+  });
+
+  app.get("/api/youtube/search", async (req, res) => {
+    try {
+      const result = await searchYoutube(String(req.query.q || ""), {
+        maxResults: Number(req.query.limit) || 8,
+      });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      res.status(err.status || 500).json({
+        error: err instanceof Error ? err.message : "YouTube search failed",
+      });
+    }
   });
 
   app.get("/api/youtube/starship", async (_req, res) => {

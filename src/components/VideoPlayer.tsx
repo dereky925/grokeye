@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import VoiceBubble from "./VoiceBubble";
 import MiniSpotify from "./MiniSpotify";
 import MiniTwitter from "./MiniTwitter";
+import MiniYoutube from "./MiniYoutube";
 import ManualOverlay from "./ManualOverlay";
 import ToolsOverlay from "./ToolsOverlay";
 import VideoHighlights from "./VideoHighlights";
@@ -14,6 +15,7 @@ import {
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
 import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
 import { useTwitterFeed } from "../hooks/useTwitterFeed";
+import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
 import {
   normalizeLabels,
   wantsHighlight,
@@ -31,6 +33,7 @@ import { snapCommand } from "../lib/commands";
 import { fetchTools, listPhrase, wantsTools } from "../lib/tools";
 import { parseSpotifyAction } from "../lib/spotify";
 import { parseTwitterAction } from "../lib/twitter";
+import { parseYoutubeAction } from "../lib/youtube";
 import type {
   HighlightLabel,
   ManualOverlayState,
@@ -52,7 +55,7 @@ function looksLikeEcho(heard: string, spoken: string) {
   const raw = heard.toLowerCase();
   // Fresh user commands should never be treated as speaker bleed.
   if (
-    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|starship|spacex)\b/.test(
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|tweets|feed|elon|musk|starship|spacex|youtube)\b/.test(
       raw,
     )
   ) {
@@ -102,9 +105,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const spotifyOpenRef = useRef(false);
   const [twitterOpen, setTwitterOpen] = useState(false);
   const twitterOpenRef = useRef(false);
+  const [youtubeOpen, setYoutubeOpen] = useState(false);
+  const youtubeOpenRef = useRef(false);
   const voiceBusy = phase !== "idle";
   const spotify = useSpotifyPlayer();
   const twitter = useTwitterFeed();
+  const youtube = useYoutubePlayer();
 
   useEffect(() => {
     spotifyOpenRef.current = spotifyOpen;
@@ -112,6 +118,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     twitterOpenRef.current = twitterOpen;
   }, [twitterOpen]);
+  useEffect(() => {
+    youtubeOpenRef.current = youtubeOpen;
+  }, [youtubeOpen]);
 
   useEffect(() => {
     manualRef.current = manual;
@@ -230,15 +239,53 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setPhase("thinking");
 
       try {
+        const youtubeAction = parseYoutubeAction(heard, youtubeOpenRef.current);
+        if (youtubeAction?.type === "open_youtube") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          return;
+        }
+        if (youtubeAction?.type === "close_youtube") {
+          setYoutubeOpen(false);
+          youtubeOpenRef.current = false;
+          return;
+        }
+        if (youtubeAction?.type === "search") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          void youtube.search(youtubeAction.query).catch((err) => {
+            setError(err instanceof Error ? err.message : "YouTube search failed");
+          });
+          return;
+        }
+        if (youtubeAction?.type === "play_starship") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          void youtube.playStarship().catch((err) => {
+            setError(err instanceof Error ? err.message : "No Starship webcast found");
+          });
+          return;
+        }
+        if (youtubeAction?.type === "next") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          youtube.next();
+          return;
+        }
+        if (youtubeAction?.type === "previous") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          youtube.previous();
+          return;
+        }
+
         const twitterAction = parseTwitterAction(heard, twitterOpenRef.current);
         if (twitterAction?.type === "open_twitter") {
           setTwitterOpen(true);
           twitterOpenRef.current = true;
-          if (!twitter.tweets.length) {
-            void twitter.openAccount("SpaceX").catch((err) => {
-              setError(err instanceof Error ? err.message : "Twitter failed");
-            });
-          }
+          void twitter.openAccount("SpaceX").catch((err) => {
+            setError(err instanceof Error ? err.message : "Twitter failed");
+          });
           return;
         }
         if (twitterAction?.type === "close_twitter") {
@@ -280,9 +327,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
         if (twitterAction?.type === "play_starship") {
-          setTwitterOpen(true);
-          twitterOpenRef.current = true;
-          void twitter.playStarship().catch((err) => {
+          // Prefer the YouTube widget for Starship webcasts.
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          void youtube.playStarship().catch((err) => {
             setError(err instanceof Error ? err.message : "No Starship video found");
           });
           return;
@@ -400,17 +448,38 @@ export default function VideoPlayer({ video, onBack }: Props) {
               videoDescription: video.description,
             });
             if (sessionId !== sessionRef.current) return;
-            // Panel-only: update the overlay, no spoken readout or center text.
             const result = applyManualAction(manualRef.current, action, doc);
             setManual(result.state);
             manualRef.current = result.state;
+            if (result.speak) {
+              lastSpokenRef.current = result.speak;
+              setMicArmed(false);
+              setPhase("speaking");
+              try {
+                const url = await speakText(result.speak);
+                await playAudioUrl(url, sessionId);
+              } catch {
+                /* overlay already updated */
+              }
+            }
             return;
           }
 
-          // Panel-only: update the overlay, no spoken readout or center text.
           const result = applyManualAction(manualRef.current, action);
           setManual(result.state);
           manualRef.current = result.state;
+          // Read steps aloud; keep panel moves silent.
+          if (result.speak && action.type !== "move_overlay") {
+            lastSpokenRef.current = result.speak;
+            setMicArmed(false);
+            setPhase("speaking");
+            try {
+              const url = await speakText(result.speak);
+              await playAudioUrl(url, sessionId);
+            } catch {
+              /* overlay already updated */
+            }
+          }
           return;
         }
 
@@ -593,6 +662,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       playAudioUrl,
       spotify,
       twitter,
+      youtube,
       video.description,
       video.detectorPack,
       video.title,
@@ -646,10 +716,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    if (phase === "idle") el.volume = spotifyOpen ? 0.02 : WAKE_DUCK;
+    if (phase === "idle") el.volume = spotifyOpen || youtubeOpen ? 0.02 : WAKE_DUCK;
     if (phase === "speaking") el.volume = 0.05;
     if (phase === "listening") el.volume = 0.02;
-  }, [phase, spotifyOpen]);
+  }, [phase, spotifyOpen, youtubeOpen]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -801,6 +871,16 @@ export default function VideoPlayer({ video, onBack }: Props) {
           total={twitter.tweets.length}
           playing={twitter.playing}
           onStopVideo={() => twitter.setPlaying(null)}
+        />
+        <MiniYoutube
+          open={youtubeOpen}
+          onClose={() => setYoutubeOpen(false)}
+          loading={youtube.loading}
+          error={youtube.error}
+          queryLabel={youtube.queryLabel}
+          current={youtube.current}
+          index={youtube.index}
+          total={youtube.videos.length}
         />
       </div>
 

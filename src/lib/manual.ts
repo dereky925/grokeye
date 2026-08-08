@@ -156,9 +156,20 @@ export function parseManualAction(
   }
 
   if (
-    /\b(open|show|pull up|start|bring up)\b/.test(t) &&
+    /\b(open|show|pull up|start|bring up|get|give me|read)\b/.test(t) &&
     /\b(manual|guide|instructions?|recipe|steps?)\b/.test(t) &&
     !/\b(next|previous|prev|continue|go on|proceed)\b/.test(t)
+  ) {
+    const topic = /\bsushi\b/.test(t) ? "sushi" : undefined;
+    return { type: "open_manual", topic };
+  }
+  // Bare "sushi manual" / "the sushi manual"
+  if (/\bsushi\b/.test(t) && /\b(manual|guide|recipe|instructions?)\b/.test(t)) {
+    return { type: "open_manual", topic: "sushi" };
+  }
+  if (
+    /^(the\s+)?manual\.?$/.test(t) ||
+    /^(show|open)\s+(the\s+)?manual\.?$/.test(t)
   ) {
     return { type: "open_manual" };
   }
