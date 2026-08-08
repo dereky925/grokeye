@@ -319,6 +319,27 @@ export function needsVideoContext(message: string): boolean {
   return false;
 }
 
+/** Labels-only sidecar for highlight turns; raw boxes + link, no reply, no TTS. */
+export async function fetchLabels(input: {
+  message: string;
+  frames: string[];
+  videoTitle?: string;
+}): Promise<{ labels: unknown[]; link: unknown }> {
+  const res = await fetch("/api/labels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || "Labels failed");
+  }
+  return {
+    labels: Array.isArray(data.labels) ? data.labels : [],
+    link: data.link ?? null,
+  };
+}
+
 export async function askGrok(input: {
   message: string;
   videoTitle?: string;
@@ -327,6 +348,7 @@ export async function askGrok(input: {
   duration?: number;
   frames?: string[];
   wantLabels?: boolean;
+  lowDetail?: boolean;
 }) {
   const chatRes = await fetch("/api/chat", {
     method: "POST",

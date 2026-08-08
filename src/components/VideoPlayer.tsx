@@ -5,12 +5,14 @@ import VideoHighlights from "./VideoHighlights";
 import {
   askGrok,
   captureFrame,
+  fetchLabels,
   needsVideoContext,
   useGrokListener,
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
 import {
   normalizeLabels,
+  normalizeLink,
   wantsHighlight,
   withLabelIds,
 } from "../lib/highlights";
@@ -22,6 +24,7 @@ import {
 } from "../lib/manual";
 import type {
   HighlightLabel,
+  HighlightLink,
   ManualOverlayState,
   VideoItem,
   VoicePhase,
@@ -49,6 +52,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [usedVision, setUsedVision] = useState(false);
   const [manual, setManual] = useState<ManualOverlayState | null>(null);
   const [highlights, setHighlights] = useState<HighlightLabel[]>([]);
+  const [highlightLinks, setHighlightLinks] = useState<HighlightLink[]>([]);
+  const [scanning, setScanning] = useState(false);
   const voiceBusy = phase !== "idle";
 
   useEffect(() => {
@@ -64,6 +69,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
   const clearHighlights = useCallback(() => {
     setHighlights([]);
+    setHighlightLinks([]);
     if (resumeAfterHighlightRef.current) {
       resumeAfterHighlightRef.current = false;
       const el = videoRef.current;
@@ -100,6 +106,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setError(null);
       setReply("");
       setUsedVision(false);
+      setScanning(false);
       setPhase("thinking");
 
       try {
@@ -174,7 +181,44 @@ export default function VideoPlayer({ video, onBack }: Props) {
           if (frame) frames = [frame];
         }
 
-        if (highlight) setHighlights([]);
+        if (highlight) {
+          setHighlights([]);
+          setHighlightLinks([]);
+        }
+
+        // Boxes ride a parallel labels-only call so they paint while the
+        // spoken reply is still generating.
+        if (highlight && frames.length) {
+          setScanning(true);
+          const resumeIfNothingPlaced = () => {
+            if (resumeAfterHighlightRef.current) {
+              resumeAfterHighlightRef.current = false;
+              void el?.play().catch(() => {});
+            }
+          };
+          void fetchLabels({
+            message: heard,
+            frames,
+            videoTitle: video.title,
+          })
+            .then((raw) => {
+              if (sessionId !== sessionRef.current) return;
+              setScanning(false);
+              const placed = withLabelIds(normalizeLabels(raw.labels));
+              setHighlights(placed);
+              setHighlightLinks(normalizeLink(raw.link, placed));
+              if (!placed.length) resumeIfNothingPlaced();
+            })
+            .catch(() => {
+              if (sessionId !== sessionRef.current) return;
+              setScanning(false);
+              resumeIfNothingPlaced();
+            });
+        } else if (highlight && resumeAfterHighlightRef.current) {
+          // Frame capture failed — nothing to locate, keep the video moving.
+          resumeAfterHighlightRef.current = false;
+          void el?.play().catch(() => {});
+        }
 
         const result = await askGrok({
           message: heard,
@@ -183,22 +227,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
           currentTime,
           duration,
           frames,
-          wantLabels: highlight,
+          lowDetail: highlight,
         });
 
         if (sessionId !== sessionRef.current) {
           void result.audioPromise.then((url) => URL.revokeObjectURL(url));
           return;
-        }
-
-        // Paint boxes as soon as chat returns — don't wait on TTS.
-        if (highlight) {
-          const placed = withLabelIds(normalizeLabels(result.labels));
-          setHighlights(placed);
-          if (!placed.length && resumeAfterHighlightRef.current) {
-            resumeAfterHighlightRef.current = false;
-            void el?.play().catch(() => {});
-          }
         }
 
         setReply(result.reply);
@@ -376,9 +410,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
             else el.pause();
           }}
         />
+        {scanning && (
+          <div className="video-scan" aria-hidden>
+            <span className="video-scan-bar" />
+          </div>
+        )}
         <VideoHighlights
           videoRef={videoRef}
           labels={highlights}
+          links={highlightLinks}
           onLabelsChange={(next) => {
             if (!next.length) clearHighlights();
             else setHighlights(next);
