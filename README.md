@@ -9,7 +9,8 @@ cp .env.example .env
 # put your XAI_API_KEY in .env
 
 npm install
-npm run dev
+npm run detect:setup   # once — creates the Python venv
+npm run dev            # API auto-starts the detector if needed
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
@@ -18,19 +19,15 @@ Open [http://localhost:5173](http://localhost:5173).
 
 1. Pick a video from the dashboard (Sushi for now).
 2. **Space** toggles play/pause.
-3. Say **“Hey Grok”** (Chrome/Edge), press **G**, or tap the mic chip — the glass orb appears.
-4. Ask about what’s on screen; Grok gets the current frame(s) + timestamp and answers with **Carina**.
+3. Just talk (Chrome/Edge) or tap the mic chip.
+4. Ask about what’s on screen, open the sushi manual, or say **“highlight the knife”** / **“highlight the person”**.
+5. Highlights: client **color blob** for salmon (instant), else **YOLOv8n** (COCO), else **yolov8n-worldv2** fallback. Your existing tracker keeps the box glued after that.
 
-Video audio is ducked while the mic is armed so speaker bleed doesn’t wreck wake-word detection. Headphones help further.
+## Detector packs
 
-## How wake word works
-
-Browser **Web Speech API** (Chrome’s cloud speech) runs one continuous recognition session. Modes:
-
-- `wake` — listen for “hey grok” (fuzzy matches allowed)
-- `command` — same session captures the question, ends on ~1.4s silence
-
-No abort/restart between wake and question (that’s what made v1 flaky).
+Weights download under Ultralytics cache / cwd (`*.pt` gitignored).
+Packs are JSON in `detector/packs/` (`kind`: `"yolo"` or `"world"`). Manifest videos can set `"detectorPack": "sushi"`.
+Set `AUTO_DETECT=0` to disable auto-spawn (if you manage the detector yourself).
 
 ## Add videos
 

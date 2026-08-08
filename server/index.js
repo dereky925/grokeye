@@ -3,6 +3,7 @@ import cors from "cors";
 import express from "express";
 import fs from "fs";
 import path from "path";
+import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -11,6 +12,7 @@ const root = path.resolve(__dirname, "..");
 const isProd = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT || 8787);
 const apiKey = process.env.XAI_API_KEY;
+const autoDetect = process.env.AUTO_DETECT !== "0";
 
 if (!apiKey) {
   console.error("Missing XAI_API_KEY in .env");
@@ -22,7 +24,8 @@ app.use(cors());
 app.use(express.json({ limit: "12mb" }));
 
 const manifestPath = path.join(root, "public", "videos", "manifest.json");
-
+const detectBase = process.env.DETECT_URL || "http://127.0.0.1:8790";
+let detectChild = null;
 function formatTime(seconds) {
   if (!Number.isFinite(seconds) || seconds < 0) return "unknown";
   const m = Math.floor(seconds / 60);
@@ -30,8 +33,56 @@ function formatTime(seconds) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, voice: "carina" });
+async function runLocalDetect({ image, pack, query }) {
+  if (!(await detectorHealthy())) {
+    await ensureDetector();
+  }
+  const response = await fetch(`${detectBase}/detect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image,
+      pack: pack || "sushi",
+      query: query || "",
+      max_detections: 2,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.detail || data?.error || "Detector request failed");
+  }
+  return data;
+}
+
+app.get("/api/health", async (_req, res) => {
+  let detector = { ok: false };
+  try {
+    const r = await fetch(`${detectBase}/health`);
+    detector = await r.json();
+  } catch {
+    detector = { ok: false, error: "unreachable" };
+  }
+  res.json({ ok: true, voice: "carina", detector });
+});
+
+app.post("/api/detect", async (req, res) => {
+  try {
+    const image = String(req.body?.image || "");
+    if (!image.startsWith("data:image")) {
+      return res.status(400).json({ error: "image data URL required" });
+    }
+    const data = await runLocalDetect({
+      image,
+      pack: req.body?.pack || "sushi",
+      query: req.body?.query || "",
+    });
+    res.json(data);
+  } catch (err) {
+    console.error("Detect proxy error:", err);
+    res.status(502).json({
+      error: err instanceof Error ? err.message : "Detector unavailable",
+    });
+  }
 });
 
 app.get("/api/videos", (_req, res) => {
@@ -56,9 +107,15 @@ app.post("/api/chat", async (req, res) => {
     const currentTime = Number(req.body?.currentTime);
     const duration = Number(req.body?.duration);
     const wantLabels = Boolean(req.body?.wantLabels);
+    const detectorPack = req.body?.detectorPack
+      ? String(req.body.detectorPack)
+      : "sushi";
     const frames = Array.isArray(req.body?.frames)
       ? req.body.frames.filter((f) => typeof f === "string" && f.startsWith("data:image"))
       : [];
+    const precomputed = Array.isArray(req.body?.detections)
+      ? req.body.detections
+      : null;
 
     if (!message) {
       return res.status(400).json({ error: "message is required" });
@@ -68,7 +125,48 @@ app.post("/api/chat", async (req, res) => {
     const durationLabel = formatTime(duration);
 
     const hasFrames = frames.length > 0;
-    const labelMode = wantLabels && hasFrames;
+    const labelMode = Boolean(wantLabels && hasFrames) || Boolean(precomputed?.length);
+
+    // Prefer client-precomputed boxes (painted already). Else run local detect.
+    let labels = [];
+    let detectorMeta = null;
+    if (precomputed?.length) {
+      labels = precomputed
+        .map((l) => ({
+          text: String(l.text || "").trim().slice(0, 40),
+          x: Number(l.x),
+          y: Number(l.y),
+          w: Number(l.w),
+          h: Number(l.h),
+          score: Number(l.score) || undefined,
+        }))
+        .filter((l) => l.text && [l.x, l.y, l.w, l.h].every(Number.isFinite));
+      detectorMeta = { source: "client", count: labels.length };
+    } else if (wantLabels && hasFrames) {
+      try {
+        const detected = await runLocalDetect({
+          image: frames[frames.length - 1],
+          pack: detectorPack,
+          query: message,
+        });
+        labels = Array.isArray(detected.labels) ? detected.labels : [];
+        detectorMeta = {
+          pack: detected.pack,
+          model: detected.model,
+          classes: detected.classes,
+          count: detected.count,
+          source: "server",
+        };
+        console.log(
+          `[detect] pack=${detectorPack} hits=${labels.length}`,
+          labels.map((l) => `${l.text}:${l.score}`).join(", ") || "(none)",
+        );
+      } catch (err) {
+        console.warn("[detect] failed, falling back to Grok boxes:", err);
+      }
+    }
+
+    const usedLocalBoxes = labels.length > 0;
 
     const system = [
       "You are Grok, built by xAI. Speak in short, clear spoken answers.",
@@ -76,21 +174,31 @@ app.post("/api/chat", async (req, res) => {
       hasFrames
         ? "The user asked something about the video/screen. Frame(s) and playback timing are attached — ground your answer in what is visible. If something isn't visible, say so briefly."
         : "No video frame is attached for this turn. Answer from general knowledge and the video title/description if useful. Do not pretend you can see the screen unless frames are provided.",
-      labelMode
+      labelMode && usedLocalBoxes
         ? [
-            "Also return visual callouts for the most relevant object(s) in the frame.",
-            "Respond with ONLY valid JSON (no markdown) matching:",
-            '{"reply":"spoken answer under 3 sentences","labels":[{"text":"short label","x":0,"y":0,"w":0,"h":0}]}',
-            "Box fields are normalized 0–1 with origin at the top-left of the image (x,y = top-left of the box; w,h = size).",
-            "Use at most 2 labels. Tight boxes around the referenced subject(s). Empty labels array if nothing clear to highlight.",
-            "reply is what will be spoken aloud — keep it natural and do not mention coordinates.",
+            "A local open-vocab detector already found object boxes for this frame.",
+            "Treat those detections as authoritative for where things are.",
+            "Respond with ONLY a short spoken reply (plain text, no JSON, no coordinates).",
+            "Mention the main detected object naturally if it matches the question.",
           ].join(" ")
-        : "Keep replies under about 3 sentences unless asked for more detail.",
+        : labelMode
+          ? [
+              "Also return visual callouts for the most relevant object(s) in the frame.",
+              "Respond with ONLY valid JSON (no markdown) matching:",
+              '{"reply":"spoken answer under 3 sentences","labels":[{"text":"short label","x":0,"y":0,"w":0,"h":0}]}',
+              "Box fields are normalized 0–1 with origin at the top-left of the image (x,y = top-left of the box; w,h = size).",
+              "Use at most 2 labels. Tight boxes around the referenced subject(s). Empty labels array if nothing clear to highlight.",
+              "reply is what will be spoken aloud — keep it natural and do not mention coordinates.",
+            ].join(" ")
+          : "Keep replies under about 3 sentences unless asked for more detail.",
       "Be helpful, a bit witty, and direct.",
       videoTitle ? `Video title: ${videoTitle}.` : "",
       videoDescription ? `Video description: ${videoDescription}.` : "",
       hasFrames && Number.isFinite(currentTime)
         ? `Playback position: ${timeLabel}${Number.isFinite(duration) ? ` of ${durationLabel}` : ""}.`
+        : "",
+      usedLocalBoxes
+        ? `Local detector results (normalized boxes): ${JSON.stringify(labels)}`
         : "",
     ]
       .filter(Boolean)
@@ -101,7 +209,9 @@ app.post("/api/chat", async (req, res) => {
           {
             type: "text",
             text: labelMode
-              ? `Viewer question: ${message}\nReturn JSON with reply + labels for the attached frame(s).`
+              ? usedLocalBoxes
+                ? `Viewer question: ${message}\nReply in spoken prose using the detector results.`
+                : `Viewer question: ${message}\nReturn JSON with reply + labels for the attached frame(s).`
               : `Viewer question: ${message}\nAttached: ${frames.length} frame(s) from the current playback position.`,
           },
           ...frames.slice(-3).map((url) => ({
@@ -142,21 +252,34 @@ app.post("/api/chat", async (req, res) => {
       "I didn't catch that.";
 
     let reply = raw;
-    let labels = [];
 
-    if (labelMode) {
+    if (labelMode && !usedLocalBoxes) {
       try {
         const parsed = parseManualJson(raw);
         reply = String(parsed.reply || parsed.answer || "").trim() || raw;
         labels = Array.isArray(parsed.labels) ? parsed.labels : [];
       } catch {
-        // Fall back to plain text if the model ignored JSON.
         reply = raw.replace(/```[\s\S]*?```/g, "").trim() || raw;
         labels = [];
       }
+    } else if (labelMode && usedLocalBoxes) {
+      // Detector owns geometry; strip accidental JSON wrappers from reply.
+      try {
+        const parsed = parseManualJson(raw);
+        if (parsed.reply) reply = String(parsed.reply).trim();
+      } catch {
+        reply = raw.replace(/```[\s\S]*?```/g, "").trim() || raw;
+      }
     }
 
-    res.json({ reply, labels, model, frameCount: frames.length });
+    res.json({
+      reply,
+      labels,
+      model,
+      frameCount: frames.length,
+      detector: detectorMeta,
+      labelSource: usedLocalBoxes ? "yolo-world" : labelMode ? "grok" : null,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Chat failed" });
@@ -375,4 +498,75 @@ if (isProd) {
 
 app.listen(port, () => {
   console.log(`Grokathon API on http://localhost:${port}`);
+  if (autoDetect) {
+    void ensureDetector();
+  }
+});
+
+async function detectorHealthy() {
+  try {
+    const r = await fetch(`${detectBase}/health`, {
+      signal: AbortSignal.timeout(1200),
+    });
+    if (!r.ok) return false;
+    const data = await r.json();
+    return Boolean(data?.ok);
+  } catch {
+    return false;
+  }
+}
+
+async function ensureDetector() {
+  if (await detectorHealthy()) {
+    console.log(`[detect] already running at ${detectBase}`);
+    return;
+  }
+
+  const venvPython = path.join(root, "detector", ".venv", "bin", "python");
+  const script = path.join(root, "detector", "server.py");
+  if (!fs.existsSync(venvPython) || !fs.existsSync(script)) {
+    console.warn(
+      "[detect] venv missing — run `npm run detect:setup` once, then restart",
+    );
+    return;
+  }
+
+  console.log("[detect] starting local YOLO-World service…");
+  detectChild = spawn(venvPython, [script], {
+    cwd: root,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: { ...process.env },
+  });
+  detectChild.on("exit", (code, signal) => {
+    console.warn(
+      `[detect] exited code=${code} signal=${signal ?? ""}`.trim(),
+    );
+    detectChild = null;
+  });
+
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await detectorHealthy()) {
+      console.log(`[detect] ready at ${detectBase}`);
+      return;
+    }
+  }
+  console.warn("[detect] still warming up — first highlight may be slow");
+}
+
+function shutdownDetector() {
+  if (detectChild && !detectChild.killed) {
+    detectChild.kill("SIGTERM");
+    detectChild = null;
+  }
+}
+
+process.on("exit", shutdownDetector);
+process.on("SIGINT", () => {
+  shutdownDetector();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  shutdownDetector();
+  process.exit(0);
 });

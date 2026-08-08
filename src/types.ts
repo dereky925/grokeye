@@ -5,6 +5,8 @@ export type VideoItem = {
   src: string;
   thumbnail: string;
   durationSeconds: number;
+  /** Local YOLO-World pack id (see detector/packs). */
+  detectorPack?: string;
 };
 
 export type VoicePhase =

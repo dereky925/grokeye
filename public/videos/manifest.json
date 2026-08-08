@@ -5,6 +5,7 @@
     "description": "A short sushi prep clip — first 20 seconds.",
     "src": "/videos/sushi.mp4",
     "thumbnail": "/videos/sushi-thumb.jpg",
-    "durationSeconds": 20
+    "durationSeconds": 20,
+    "detectorPack": "sushi"
   }
 ]

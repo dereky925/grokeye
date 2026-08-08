@@ -64,7 +64,8 @@ export function parseManualAction(
 
   if (
     /\b(open|show|pull up|start|bring up)\b/.test(t) &&
-    /\b(manual|guide|instructions?|recipe|steps?)\b/.test(t)
+    /\b(manual|guide|instructions?|recipe|steps?)\b/.test(t) &&
+    !/\b(next|previous|prev|continue|go on|proceed)\b/.test(t)
   ) {
     return { type: "open_manual" };
   }
@@ -82,9 +83,10 @@ export function parseManualAction(
   if (!manualOpen) return null;
 
   if (
-    /\b(next( step)?|continue|go on|proceed|what'?s next|what is next|next one)\b/.test(
+    /\b(next(?:\s+step)?|continue|go on|proceed|keep going|what'?s next|what is next|next one|skip ahead)\b/.test(
       t,
-    )
+    ) ||
+    /^next[.!?]?$/.test(t)
   ) {
     return { type: "next_step" };
   }
@@ -170,6 +172,9 @@ export function applyManualAction(
       return { state: null, speak: "Manual closed." };
     case "next_step": {
       if (!state) return { state, speak: "No manual is open." };
+      if (state.loading) {
+        return { state, speak: "Still loading the guide — one sec." };
+      }
       if (state.stepIndex >= state.doc.steps.length - 1) {
         return {
           state,
@@ -179,7 +184,7 @@ export function applyManualAction(
       const stepIndex = state.stepIndex + 1;
       const step = state.doc.steps[stepIndex];
       return {
-        state: { ...state, stepIndex },
+        state: { ...state, stepIndex, loading: false },
         speak: `Step ${stepIndex + 1}: ${step.text}`,
       };
     }
