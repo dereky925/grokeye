@@ -49,16 +49,16 @@ export function parseSpotifyAction(
     return { type: "previous_track" };
   }
 
-  // Default Bowie playlist openers (exact-ish).
+  // Default Bowie → Starman (exact openers).
   if (
-    /^(play|put\s+on|turn\s+on|start|open|launch)(\s+(some\s+)?)?(spotify|bowie|david\s+bowie)(\s+(music|playlist|songs?))?\.?$/.test(
+    /^(play|put\s+on|turn\s+on|start|open|launch)(\s+(some\s+)?)?(spotify|bowie|david\s+bowie|starman)(\s+(music|playlist|songs?))?\.?$/.test(
       t,
     )
   ) {
     return { type: "open_spotify" };
   }
 
-  // Freeform: "play Space Oddity", "play me some Radiohead", "put on Abbey Road"
+  // Freeform: "play Space Oddity", "play joe rogan with elon", "put on Abbey Road"
   const playMatch = t.match(
     /^(?:(?:can you|could you|please)\s+)?(?:play|put on|queue|start)(?:\s+me)?(?:\s+some)?\s+(.+?)\.?$/,
   );
@@ -66,9 +66,11 @@ export function parseSpotifyAction(
     let q = playMatch[1].trim();
     q = q.replace(/^(the\s+)?(song|track|album|artist|playlist)\s+/i, "");
     q = q.replace(/\s+on\s+spotify$/i, "").trim();
+    // Bare "david bowie" / "bowie" still maps to Starman via open_spotify above.
+    // Longer queries (guests, podcast titles) go to search.
     if (
       q &&
-      !/^(it|music|song|the\s+song|spotify|bowie|david\s+bowie)(\s+playlist)?$/i.test(
+      !/^(it|music|song|the\s+song|spotify|bowie|david\s+bowie|starman)(\s+playlist)?$/i.test(
         q,
       )
     ) {

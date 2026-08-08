@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export const BOWIE_CONTEXT_URI = "spotify:playlist:37i9dQZF1DZ06evO0auErC";
+export const STARMAN_URI = "spotify:track:5i5eA8a5orfvH4QqmhyiG1";
+/** @deprecated use STARMAN_URI — kept alias for callers */
+export const BOWIE_CONTEXT_URI = STARMAN_URI;
 const ACTIVATED_KEY = "grokeye_spotify_activated";
 
 export type SpotifyTrackInfo = {
@@ -369,7 +371,7 @@ export function useSpotifyPlayer() {
       await player.activateElement();
       const id = await getDeviceId();
       setSharedActivated(true);
-      await playOnDevice(id, { context_uri: BOWIE_CONTEXT_URI });
+      await playOnDevice(id, { uri: STARMAN_URI });
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Could not enable Spotify";
@@ -383,7 +385,7 @@ export function useSpotifyPlayer() {
     try {
       await requireReady();
       const id = await getDeviceId();
-      await playOnDevice(id, { context_uri: BOWIE_CONTEXT_URI });
+      await playOnDevice(id, { uri: STARMAN_URI });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Could not start Bowie";
       if (/never became ready/i.test(msg)) setSharedActivated(false);

@@ -16,7 +16,8 @@ const SCOPES = [
   "user-read-playback-state",
 ].join(" ");
 
-const BOWIE_CONTEXT_URI = "spotify:playlist:37i9dQZF1DZ06evO0auErC";
+// Starman — 2012 Remaster (Ziggy Stardust). Default when user asks for Bowie.
+const DEFAULT_BOWIE_URI = "spotify:track:5i5eA8a5orfvH4QqmhyiG1";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SESSION_DIR = path.join(__dirname, "..", ".data");
@@ -66,7 +67,7 @@ export function spotifyConfigured() {
 }
 
 export function getBowieContextUri() {
-  return BOWIE_CONTEXT_URI;
+  return DEFAULT_BOWIE_URI;
 }
 
 function newSid() {
@@ -145,7 +146,7 @@ export function mountSpotifyRoutes(app) {
       return res.json({
         configured: false,
         authenticated: false,
-        bowieUri: BOWIE_CONTEXT_URI,
+        bowieUri: DEFAULT_BOWIE_URI,
       });
     }
     try {
@@ -153,13 +154,13 @@ export function mountSpotifyRoutes(app) {
       res.json({
         configured: true,
         authenticated: Boolean(token),
-        bowieUri: BOWIE_CONTEXT_URI,
+        bowieUri: DEFAULT_BOWIE_URI,
       });
     } catch {
       res.json({
         configured: true,
         authenticated: false,
-        bowieUri: BOWIE_CONTEXT_URI,
+        bowieUri: DEFAULT_BOWIE_URI,
       });
     }
   });
@@ -281,7 +282,7 @@ export function mountSpotifyRoutes(app) {
       } else if (req.body?.context_uri) {
         playBody = { context_uri: String(req.body.context_uri) };
       } else {
-        playBody = { context_uri: BOWIE_CONTEXT_URI };
+        playBody = { uris: [DEFAULT_BOWIE_URI] };
       }
 
       // Transfer first so Spotify actually registers the Web Playback device.
@@ -361,24 +362,124 @@ export function mountSpotifyRoutes(app) {
       const q = String(req.query.q || "").trim();
       if (!q) return res.status(400).json({ error: "q required" });
 
+      const qLower = q.toLowerCase();
       const wantPodcast =
         /\b(podcast|pod\b|episode|show|joe\s*rogan|jre|rogan)\b/i.test(q);
+      // Guest / topic cues mean we want a specific episode, not the show feed.
+      const wantEpisode =
+        wantPodcast &&
+        (/\b(with|featuring|ft\.?|episode|ep\.?)\b/i.test(q) ||
+          /\b(elon|musk|zelensky|putin|trump|obama|bernie|ye|kanye|hamilton)\b/i.test(
+            q,
+          ) ||
+          qLower
+            .replace(
+              /\b(play|the|a|an|podcast|pod|episode|show|joe|rogan|jre|experience|on|spotify)\b/gi,
+              " ",
+            )
+            .replace(/\s+/g, " ")
+            .trim().length >= 3);
 
-      const params = new URLSearchParams({
-        q,
-        type: wantPodcast
-          ? "show,episode,track,album,artist,playlist"
-          : "track,album,artist,playlist,show,episode",
-        limit: "5",
-        market: "from_token",
-      });
-      const r = await fetch(`https://api.spotify.com/v1/search?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        return res.status(r.status).json({
-          error: data.error?.message || data.error || "Search failed",
+      async function spotifySearch(query, type, limit = 8) {
+        const params = new URLSearchParams({
+          q: query,
+          type,
+          limit: String(limit),
+        });
+        const r = await fetch(`https://api.spotify.com/v1/search?${params}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const err = new Error(
+            data.error?.message || data.error || "Search failed",
+          );
+          err.status = r.status;
+          throw err;
+        }
+        return data;
+      }
+
+      function scoreText(hay, query) {
+        const text = String(hay || "").toLowerCase();
+        const words = String(query || "")
+          .toLowerCase()
+          .split(/[^a-z0-9]+/)
+          .filter(
+            (w) =>
+              w.length > 2 &&
+              !/^(the|and|with|podcast|episode|show|play|joe|rogan|jre)$/.test(
+                w,
+              ),
+          );
+        if (!words.length) return text.includes(String(query || "").toLowerCase())
+          ? 1
+          : 0;
+        return words.reduce((s, w) => s + (text.includes(w) ? 1 : 0), 0);
+      }
+
+      function pickBestEpisode(items, query) {
+        const list = (items || []).filter((e) => e?.uri);
+        if (!list.length) return null;
+        let best = list[0];
+        let bestScore = -1;
+        for (const ep of list) {
+          const hay = `${ep.name} ${ep.show?.name || ""} ${ep.description || ""}`;
+          const score = scoreText(hay, query);
+          if (score > bestScore) {
+            bestScore = score;
+            best = ep;
+          }
+        }
+        // Require at least one meaningful token hit when looking for a guest episode.
+        if (wantEpisode && bestScore < 1) return null;
+        return best;
+      }
+
+      let data;
+      try {
+        if (wantEpisode) {
+          // Episode-first pass for "joe rogan with elon", etc.
+          data = await spotifySearch(q, "episode", 10);
+          let ep = pickBestEpisode(data.episodes?.items, q);
+          if (!ep) {
+            // Retry with a tightened query (helps speech-to-text wording).
+            const tight = q
+              .replace(/\b(podcast|pod|episode|show|experience)\b/gi, " ")
+              .replace(/\s+/g, " ")
+              .trim();
+            if (tight && tight.toLowerCase() !== qLower) {
+              data = await spotifySearch(tight, "episode", 10);
+              ep = pickBestEpisode(data.episodes?.items, tight);
+            }
+          }
+          if (ep) {
+            return res.json({
+              ok: true,
+              query: q,
+              result: {
+                kind: "episode",
+                uri: ep.uri,
+                name: ep.name,
+                subtitle: ep.show?.name || "Episode",
+                image:
+                  ep.images?.[0]?.url || ep.show?.images?.[0]?.url || null,
+              },
+            });
+          }
+          // Fall through to mixed search.
+        }
+
+        data = await spotifySearch(
+          q,
+          wantPodcast
+            ? "show,episode,track,album,artist,playlist"
+            : "track,album,artist,playlist,show,episode",
+          5,
+        );
+      } catch (err) {
+        return res.status(err.status || 500).json({
+          error: err instanceof Error ? err.message : "Search failed",
         });
       }
 
@@ -387,7 +488,7 @@ export function mountSpotifyRoutes(app) {
       const artist = data.artists?.items?.find((a) => a?.uri);
       const playlist = data.playlists?.items?.find((p) => p?.uri);
       const show = data.shows?.items?.find((s) => s?.uri);
-      const episode = data.episodes?.items?.find((e) => e?.uri);
+      const episode = pickBestEpisode(data.episodes?.items, q);
 
       const asTrack = track
         ? {
@@ -440,13 +541,17 @@ export function mountSpotifyRoutes(app) {
             uri: episode.uri,
             name: episode.name,
             subtitle: episode.show?.name || "Episode",
-            image: episode.images?.[0]?.url || episode.show?.images?.[0]?.url || null,
+            image:
+              episode.images?.[0]?.url ||
+              episode.show?.images?.[0]?.url ||
+              null,
           }
         : null;
 
-      /** Prefer podcasts when the query sounds like one; otherwise music first. */
       const best = wantPodcast
-        ? asShow || asEpisode || asTrack || asAlbum || asArtist || asPlaylist
+        ? wantEpisode
+          ? asEpisode || asShow || asTrack || asAlbum || asArtist || asPlaylist
+          : asShow || asEpisode || asTrack || asAlbum || asArtist || asPlaylist
         : asTrack || asAlbum || asArtist || asPlaylist || asShow || asEpisode;
 
       if (!best) {
