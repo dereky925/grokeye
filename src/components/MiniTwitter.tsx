@@ -33,6 +33,9 @@ export default function MiniTwitter({
 
   const tweet = playing || current;
   const videoUrl = playing?.video?.videoUrl || null;
+  const youtubeId = playing?.youtubeId || null;
+  const streamUrl = playing?.streamUrl || null;
+  const showPlayer = Boolean(youtubeId || videoUrl || (streamUrl && playing));
 
   return (
     <aside className="mini-twitter" aria-label="X timeline">
@@ -69,16 +72,40 @@ export default function MiniTwitter({
             the API.
           </p>
         </div>
-      ) : videoUrl ? (
+      ) : showPlayer ? (
         <div className="mini-twitter-video-wrap">
-          <video
-            className="mini-twitter-video"
-            src={videoUrl}
-            poster={playing?.video?.preview || undefined}
-            controls
-            autoPlay
-            playsInline
-          />
+          {youtubeId ? (
+            <iframe
+              className="mini-twitter-video"
+              src={`https://www.youtube.com/embed/${youtubeId}?autoplay=1`}
+              title="SpaceX webcast"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+            />
+          ) : videoUrl ? (
+            <video
+              className="mini-twitter-video"
+              src={videoUrl}
+              poster={playing?.video?.preview || undefined}
+              controls
+              autoPlay
+              playsInline
+            />
+          ) : streamUrl ? (
+            <div className="mini-twitter-panel">
+              <p className="mini-twitter-msg">
+                Official stream linked from @SpaceX — open it here:
+              </p>
+              <a
+                className="mini-twitter-linkish"
+                href={streamUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open webcast
+              </a>
+            </div>
+          ) : null}
           <div className="mini-twitter-video-meta">
             <p className="mini-twitter-tweet-text">{playing?.text}</p>
             <button type="button" className="mini-twitter-linkish" onClick={onStopVideo}>

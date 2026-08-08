@@ -622,6 +622,7 @@ video {
   border-radius: 12px;
   background: #000;
   max-height: 220px;
+  border: 0;
 }
 
 .mini-twitter-video-meta {

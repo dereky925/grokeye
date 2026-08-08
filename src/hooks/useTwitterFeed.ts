@@ -24,6 +24,8 @@ export type TwitterTweet = {
   author: TwitterUser | null;
   media: TwitterMedia[];
   video: TwitterMedia | null;
+  youtubeId?: string | null;
+  streamUrl?: string | null;
 };
 
 export function useTwitterFeed() {
@@ -115,7 +117,7 @@ export function useTwitterFeed() {
       setIndex(Math.max(0, list.findIndex((t) => t.id === tweet.id)));
       setPlaying(tweet);
       setMode("video");
-      setQueryLabel("Starship launch");
+      setQueryLabel("SpaceX webcast");
       return tweet;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Starship search failed";

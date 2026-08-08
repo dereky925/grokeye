@@ -101,6 +101,22 @@ function normalizeTweets(payload) {
         durationMs: m.duration_ms || null,
       }));
     const video = mediaItems.find((m) => m.videoUrl) || null;
+    const externalUrls = ((t.entities || {}).urls || [])
+      .map((u) => u.expanded_url || u.url)
+      .filter(Boolean);
+    let youtubeId = null;
+    let streamUrl = null;
+    for (const u of externalUrls) {
+      const id = youtubeIdFromUrl(u);
+      if (id) {
+        youtubeId = id;
+        streamUrl = `https://www.youtube.com/embed/${id}?autoplay=1`;
+        break;
+      }
+      if (/spacex\.com|x\.com\/i\/broadcasts|twitter\.com\/i\/broadcasts/i.test(String(u))) {
+        streamUrl = String(u);
+      }
+    }
     return {
       id: t.id,
       text: t.text || "",
@@ -118,11 +134,35 @@ function normalizeTweets(payload) {
         : null,
       media: mediaItems,
       video,
+      externalUrls,
+      youtubeId,
+      streamUrl,
     };
   });
 }
 
-const TWEET_FIELDS = "created_at,text,attachments,author_id,public_metrics";
+function youtubeIdFromUrl(raw) {
+  try {
+    const url = new URL(String(raw));
+    const host = url.hostname.replace(/^www\./, "");
+    if (host === "youtu.be") {
+      return url.pathname.replace(/^\//, "").split("/")[0] || null;
+    }
+    if (host === "youtube.com" || host === "m.youtube.com") {
+      if (url.searchParams.get("v")) return url.searchParams.get("v");
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts[0] === "live" || parts[0] === "embed" || parts[0] === "shorts") {
+        return parts[1] || null;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+const TWEET_FIELDS =
+  "created_at,text,attachments,author_id,public_metrics,entities";
 const USER_FIELDS = "name,username,profile_image_url,description,public_metrics";
 const MEDIA_FIELDS =
   "type,url,preview_image_url,variants,duration_ms,height,width,alt_text";
@@ -253,48 +293,147 @@ export function mountTwitterRoutes(app) {
     }
   });
 
-  /** Latest Starship-related video from SpaceX (or Starship-focused accounts). */
+  /** Official @SpaceX Starship launch webcast (YouTube link or native video). */
   app.get("/api/twitter/starship", async (req, res) => {
     try {
       if (!twitterConfigured()) {
         return res.status(503).json({ error: "Twitter is not configured" });
       }
 
+      function isSpaceX(tweet) {
+        return (tweet.author?.username || "").toLowerCase() === "spacex";
+      }
+
+      function hasPlayable(tweet) {
+        return Boolean(tweet?.video?.videoUrl || tweet?.youtubeId || tweet?.streamUrl);
+      }
+
+      function scoreWebcast(tweet) {
+        if (!isSpaceX(tweet) || !hasPlayable(tweet)) return -Infinity;
+        const text = String(tweet.text || "").toLowerCase();
+        let score = 0;
+
+        // Official webcast / stream posts win
+        if (/\b(webcast|live\s*stream|livestream)\b/.test(text)) score += 30;
+        if (tweet.youtubeId && /\b(webcast|starship|flight|launch|watch)\b/.test(text))
+          score += 28;
+        if (/\b(watch\s+(live|now|here)|tune\s*in|happening\s+now)\b/.test(text))
+          score += 18;
+        if (/\bwatch\b/.test(text) && /\b(starship|flight|launch)\b/.test(text))
+          score += 12;
+
+        // Launch-day official clips (e.g. “Liftoff!”)
+        if (/^\s*liftoff[!,. ]*$/i.test(String(tweet.text || "").trim()) || /\bliftoff\b/.test(text))
+          score += 22;
+        if (/\b(launch|lift[\s-]?off|ascent)\b/.test(text)) score += 10;
+        if (/\b(flight\s*\d+|ifft\s*\d+)\b/.test(text)) score += 10;
+        if (/\bstarship\b/.test(text)) score += 8;
+
+        if (tweet.youtubeId) score += 8;
+        if (tweet.video?.videoUrl) score += 4;
+
+        const dur = Number(tweet.video?.durationMs || 0);
+        if (dur >= 180_000) score += 10;
+        else if (dur >= 60_000) score += 5;
+
+        // Hard negatives — not the launch webcast
+        if (
+          /\b(landing|splashdown|recover|recovery|ocean|debris|earnings|financial|quarter|revenue|starlink|crew-\d+|terafab|starmind|moonlight)\b/.test(
+            text,
+          )
+        ) {
+          score -= 30;
+        }
+        return score;
+      }
+
       const queries = [
-        '(from:SpaceX OR from:SpaceXOfficial OR from:NASASpaceflight) (Starship OR "Flight" OR launch OR webcast OR livestream) (has:videos OR has:media) -is:retweet',
-        "Starship (launch OR flight OR livestream OR webcast) has:videos -is:retweet",
+        // Webcast posts may link YouTube without attaching video
+        'from:SpaceX (webcast OR livestream OR "live stream" OR "watch live") (Starship OR Flight OR launch) -is:retweet',
+        'from:SpaceX (Starship) (webcast OR livestream OR "watch live" OR watch OR Flight OR launch OR Liftoff) -is:retweet',
+        "from:SpaceX (Liftoff OR Starship) has:videos -is:retweet",
       ];
 
+      /** @type {any[]} */
       let tweets = [];
       let lastErr = null;
+
       for (const query of queries) {
         try {
           const data = await twitterGet("/tweets/search/recent", {
             query,
-            max_results: "15",
+            max_results: "20",
             "tweet.fields": TWEET_FIELDS,
             expansions: "attachments.media_keys,author_id",
             "media.fields": MEDIA_FIELDS,
             "user.fields": USER_FIELDS,
           });
-          tweets = normalizeTweets(data);
-          if (tweets.some((t) => t.video?.videoUrl)) break;
+          const batch = normalizeTweets(data).filter(
+            (t) => isSpaceX(t) && hasPlayable(t),
+          );
+          tweets = tweets.concat(batch);
+          if (batch.some((t) => scoreWebcast(t) >= 25)) break;
         } catch (err) {
           lastErr = err;
         }
       }
 
-      const withVideo = tweets.find((t) => t.video?.videoUrl);
-      if (!withVideo) {
+      // Timeline catch-all for SpaceX Liftoff / Flight posts
+      if (!tweets.some((t) => scoreWebcast(t) >= 20)) {
+        try {
+          const userData = await twitterGet("/users/by/username/SpaceX", {
+            "user.fields": USER_FIELDS,
+          });
+          const user = userData.data;
+          if (user?.id) {
+            const timeline = await twitterGet(`/users/${user.id}/tweets`, {
+              max_results: "50",
+              exclude: "replies,retweets",
+              "tweet.fields": TWEET_FIELDS,
+              expansions: "attachments.media_keys,author_id",
+              "media.fields": MEDIA_FIELDS,
+              "user.fields": USER_FIELDS,
+            });
+            if (!timeline.includes) timeline.includes = {};
+            if (!timeline.includes.users) timeline.includes.users = [user];
+            tweets = tweets.concat(
+              normalizeTweets(timeline).filter((t) => hasPlayable(t)),
+            );
+          }
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+
+      const byId = new Map();
+      for (const t of tweets) {
+        if (!byId.has(t.id)) byId.set(t.id, t);
+      }
+      const ranked = [...byId.values()]
+        .map((t) => ({ t, score: scoreWebcast(t) }))
+        .filter((x) => x.score >= 15)
+        .sort(
+          (a, b) =>
+            b.score - a.score ||
+            String(b.t.createdAt || "").localeCompare(String(a.t.createdAt || "")),
+        );
+
+      const best = ranked[0]?.t;
+      if (!best) {
         return res.status(404).json({
           error:
             lastErr?.message ||
-            "No recent Starship video found in the last ~7 days (Twitter recent search window)",
-          tweets,
+            "No official @SpaceX Starship webcast/launch video found recently. SpaceX may only have highlight clips posted right now.",
+          tweets: [...byId.values()].slice(0, 8),
         });
       }
 
-      res.json({ ok: true, tweet: withVideo, tweets });
+      res.json({
+        ok: true,
+        tweet: best,
+        score: ranked[0].score,
+        tweets: ranked.map((x) => x.t),
+      });
     } catch (err) {
       res.status(err.status || 500).json({
         error: err instanceof Error ? err.message : "Starship search failed",

@@ -29,12 +29,15 @@ export function parseTwitterAction(message: string, twitterOpen: boolean): Twitt
   }
 
   if (
-    /\b(latest\s+)?starship\b/.test(t) &&
+    /\b(latest|last)?\s*starship\b/.test(t) &&
     /\b(play|watch|show|open|launch|stream|video|webcast|livestream)\b/.test(t)
   ) {
     return { type: "play_starship" };
   }
-  if (/^(play|watch)\s+(the\s+)?(latest\s+)?(starship)(\s+launch)?/.test(t)) {
+  if (
+    /^(play|watch)\s+(the\s+)?(latest|last)?\s*(starship)(\s+launch)?/.test(t) ||
+    /\bplay\s+(the\s+)?(latest|last)\s+starship\b/.test(t)
+  ) {
     return { type: "play_starship" };
   }
 
