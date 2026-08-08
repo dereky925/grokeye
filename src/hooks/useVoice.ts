@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 type SpeechRecognitionLike = {
   continuous: boolean;
   interimResults: boolean;
+  maxAlternatives: number;
   lang: string;
   start: () => void;
   stop: () => void;
@@ -13,12 +14,14 @@ type SpeechRecognitionLike = {
   onstart: (() => void) | null;
 };
 
+type RecognitionAlternative = { transcript: string; confidence: number };
+type RecognitionResult = ArrayLike<RecognitionAlternative> & {
+  isFinal: boolean;
+};
+
 type SpeechRecognitionEventLike = {
   resultIndex: number;
-  results: ArrayLike<{
-    isFinal: boolean;
-    0: { transcript: string };
-  }>;
+  results: ArrayLike<RecognitionResult>;
 };
 
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
@@ -42,9 +45,21 @@ function getSpeechRecognition(): SpeechRecognitionCtor | null {
   return w.SpeechRecognition || w.webkitSpeechRecognition || null;
 }
 
+// Browser STT mangles "grok" in fairly predictable ways.
+const WAKE_LEAD = "hey|hi|ok|okay|yo";
+const GROK_HEARD = "grok|groc|grock|grawk|greg|brook|brock|crock";
+
 // Optional strip if someone still says it out of habit
-const WAKE_STRIP_RE =
-  /^(?:.*?\b)?(?:hey|hi|ok|okay)[\s,.-]*(?:grok|groc|grawk|greg|brook|brock)[\s,.-]*/i;
+const WAKE_STRIP_RE = new RegExp(
+  `^(?:.*?\\b)?(?:${WAKE_LEAD})[\\s,.-]*(?:${GROK_HEARD})[\\s,.-]*`,
+  "i",
+);
+
+/** The wake phrase anywhere in an utterance — used to barge in mid-answer. */
+export const WAKE_RE = new RegExp(
+  `\\b(?:${WAKE_LEAD})[\\s,.-]*(?:${GROK_HEARD})\\b`,
+  "i",
+);
 
 function normalize(text: string) {
   return text.replace(/\s+/g, " ").trim();
@@ -61,7 +76,7 @@ function cleanUtterance(text: string) {
 export function useGrokListener(options: {
   enabled: boolean;
   onSpeechStart: () => void;
-  onQuestion: (text: string) => void;
+  onQuestion: (text: string, alternatives?: string[]) => void;
   onInterim?: (text: string) => void;
 }): VoiceListenState {
   const { enabled, onSpeechStart, onQuestion, onInterim } = options;
@@ -75,6 +90,7 @@ export function useGrokListener(options: {
   const onQuestionRef = useRef(onQuestion);
   const onInterimRef = useRef(onInterim);
   const bufferRef = useRef("");
+  const lastFinalAltsRef = useRef<string[]>([]);
   const silenceTimerRef = useRef<number | null>(null);
   const restartTimerRef = useRef<number | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -101,10 +117,14 @@ export function useGrokListener(options: {
   const finishUtterance = useCallback(() => {
     clearSilence();
     const text = cleanUtterance(bufferRef.current);
+    const alts = lastFinalAltsRef.current
+      .map((a) => cleanUtterance(a))
+      .filter(Boolean);
     bufferRef.current = "";
+    lastFinalAltsRef.current = [];
     setInterim("");
     setModeBoth("idle");
-    if (text) onQuestionRef.current(text);
+    if (text) onQuestionRef.current(text, alts);
   }, [clearSilence, setModeBoth]);
 
   const bumpSilenceWatch = useCallback(() => {
@@ -122,6 +142,7 @@ export function useGrokListener(options: {
   const beginCapture = useCallback(() => {
     if (modeRef.current === "capturing") return;
     bufferRef.current = "";
+    lastFinalAltsRef.current = [];
     setInterim("");
     setModeBoth("capturing");
     onSpeechStartRef.current();
@@ -165,6 +186,7 @@ export function useGrokListener(options: {
     const recognition = new Ctor();
     recognition.continuous = true;
     recognition.interimResults = true;
+    recognition.maxAlternatives = 4;
     recognition.lang = "en-US";
     recognitionRef.current = recognition;
 
@@ -183,9 +205,19 @@ export function useGrokListener(options: {
       let interimChunk = "";
       let finalChunk = "";
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const piece = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finalChunk += `${piece} `;
-        else interimChunk += piece;
+        const result = event.results[i];
+        const piece = result[0].transcript;
+        if (result.isFinal) {
+          finalChunk += `${piece} `;
+          const alts: string[] = [];
+          for (let a = 0; a < result.length; a += 1) {
+            const tr = result[a]?.transcript;
+            if (tr) alts.push(tr);
+          }
+          lastFinalAltsRef.current = alts;
+        } else {
+          interimChunk += piece;
+        }
       }
 
       const live = cleanUtterance(`${finalChunk} ${interimChunk}`);
@@ -263,6 +295,82 @@ export function useGrokListener(options: {
     startCommand,
     cancelCommand,
   };
+}
+
+/**
+ * Barge-in listener: a second recognizer that reacts to nothing but the wake
+ * phrase, so it can stay live while Grok is talking without Grok's own speech
+ * triggering a new turn. Interim results are honoured so the interrupt lands
+ * mid-word instead of after the phrase finalizes.
+ *
+ * The browser only allows one active recognition at a time, so callers must
+ * keep this mutually exclusive with useGrokListener.
+ */
+export function useWakeWord(options: { enabled: boolean; onWake: () => void }) {
+  const { enabled, onWake } = options;
+  const onWakeRef = useRef(onWake);
+
+  useEffect(() => {
+    onWakeRef.current = onWake;
+  }, [onWake]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const Ctor = getSpeechRecognition();
+    if (!Ctor) return;
+
+    let running = true;
+    let fired = false;
+    let restartTimer: number | null = null;
+
+    const recognition = new Ctor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 4;
+    recognition.lang = "en-US";
+
+    const safeStart = () => {
+      if (!running) return;
+      try {
+        recognition.start();
+      } catch {
+        /* already started */
+      }
+    };
+
+    recognition.onresult = (event) => {
+      if (fired) return;
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        for (let a = 0; a < result.length; a += 1) {
+          const heard = result[a]?.transcript || "";
+          if (!WAKE_RE.test(heard)) continue;
+          fired = true;
+          running = false;
+          recognition.abort();
+          onWakeRef.current();
+          return;
+        }
+      }
+    };
+
+    recognition.onerror = null;
+    recognition.onend = () => {
+      if (!running) return;
+      restartTimer = window.setTimeout(safeStart, 200);
+    };
+
+    safeStart();
+
+    return () => {
+      running = false;
+      if (restartTimer != null) window.clearTimeout(restartTimer);
+      recognition.onresult = null;
+      recognition.onend = null;
+      recognition.onerror = null;
+      recognition.abort();
+    };
+  }, [enabled]);
 }
 
 export function captureVideoFrames(

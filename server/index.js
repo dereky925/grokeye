@@ -5,6 +5,9 @@ import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
+import { mountSpotifyRoutes, spotifyConfigured } from "./spotify.js";
+import { mountTwitterRoutes, twitterConfigured } from "./twitter.js";
+import { mountYoutubeRoutes, youtubeConfigured } from "./youtube.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,8 +23,11 @@ if (!apiKey) {
 }
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "12mb" }));
+mountSpotifyRoutes(app);
+mountTwitterRoutes(app);
+mountYoutubeRoutes(app);
 
 const manifestPath = path.join(root, "public", "videos", "manifest.json");
 const detectBase = process.env.DETECT_URL || "http://127.0.0.1:8790";
@@ -79,7 +85,14 @@ app.get("/api/health", async (_req, res) => {
   } catch {
     detector = { ok: false, error: "unreachable" };
   }
-  res.json({ ok: true, voice: "carina", detector });
+  res.json({
+    ok: true,
+    voice: "carina",
+    detector,
+    spotify: { configured: spotifyConfigured() },
+    twitter: { configured: twitterConfigured() },
+    youtube: { configured: true, hasApiKey: youtubeConfigured() },
+  });
 });
 
 app.post("/api/detect", async (req, res) => {
@@ -995,8 +1008,8 @@ app.post("/api/manual", async (req, res) => {
       `Create a concise step-by-step how-to manual for: ${topic}.`,
       videoTitle ? `The viewer is watching a video titled "${videoTitle}".` : "",
       videoDescription ? `Video description: ${videoDescription}.` : "",
-      "Use web search once to find ONE reputable public guide/recipe page.",
-      "Prefer Just One Cookbook, Serious Eats, BBC Good Food, or NYT Cooking.",
+      "Use web search once to find ONE reputable public how-to guide for THIS exact topic.",
+      "Pick the most authoritative source for the subject: for IKEA / furniture assembly prefer the official IKEA product assembly instructions or a clear desk-building guide that cites IKEA steps; for repairs/DIY prefer iFixit, manufacturer service docs, or a well-known enthusiast guide; for cooking prefer Serious Eats, Just One Cookbook, BBC Good Food, or NYT Cooking; otherwise use an official or widely-trusted tutorial.",
       "Return ONLY valid JSON matching this schema:",
       JSON.stringify({
         title: "string",
@@ -1008,7 +1021,9 @@ app.post("/api/manual", async (req, res) => {
         },
         steps: [{ n: 1, text: "short imperative step" }],
       }),
-      "Rules: exactly 6 short steps, one sentence each, no markdown, real https source URL.",
+      /ikea|desk|furniture|assembly/i.test(topic)
+        ? "Rules: exactly 8 short imperative assembly steps, one sentence each, no markdown, real https source URL relevant to the topic (prefer ikea.com)."
+        : "Rules: exactly 6 short imperative steps, one sentence each, no markdown, real https source URL relevant to the topic.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -1142,7 +1157,508 @@ app.post("/api/websearch", async (req, res) => {
   }
 });
 
-app.use(express.static(path.join(root, "public")));
+/**
+ * Wikimedia now 403s anonymous hotlinks to upload.wikimedia.org, but the
+ * Special:FilePath endpoint on commons.wikimedia.org serves fine (302 → image).
+ * Rewrite any upload.* URL the model returns into that form.
+ */
+function toDisplayableImageUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname !== "upload.wikimedia.org") return url;
+    const parts = u.pathname.split("/").filter(Boolean);
+    const thumbIdx = parts.indexOf("thumb");
+    const filename = thumbIdx !== -1 ? parts[thumbIdx + 3] : parts[parts.length - 1];
+    if (!filename) return url;
+    return `https://commons.wikimedia.org/wiki/Special:FilePath/${filename}?width=320`;
+  } catch {
+    return url;
+  }
+}
+
+const IMG_UA = "GrokEye/1.0 (hackathon demo; +https://x.ai)";
+
+/** Confirm a URL actually serves an image (short timeout, body discarded). */
+async function imageWorks(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 7000);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { "User-Agent": IMG_UA, Accept: "image/*" },
+    });
+    const ct = r.headers.get("content-type") || "";
+    const ok = r.ok && ct.startsWith("image/");
+    try {
+      await r.body?.cancel();
+    } catch {
+      /* ignore */
+    }
+    return ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * The noun that decides relevance — "transmission jack" -> "jack". Without this
+ * check Commons happily returns a power-line photo for "transmission jack".
+ */
+function keyNoun(query) {
+  const words = query
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return words[words.length - 1] || "";
+}
+
+/** Find a reliable, hotlink-safe image for a tool via Wikimedia Commons search. */
+async function commonsImageUrl(query, requiredWord = "") {
+  try {
+    const api = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
+      query,
+    )}&srnamespace=6&srlimit=12&format=json`;
+    const r = await fetch(api, { headers: { "User-Agent": IMG_UA } });
+    const data = await r.json();
+    const need = (requiredWord || keyNoun(query)).toLowerCase();
+
+    for (const hit of data?.query?.search || []) {
+      const file = String(hit?.title || "")
+        .replace(/^File:/, "")
+        .trim();
+      if (!file || !/\.(png|jpe?g|webp)$/i.test(file)) continue;
+      if (need && !file.toLowerCase().includes(need)) continue;
+      return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(
+        file,
+      )}?width=320`;
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+/** Openverse (no API key) as a second image source. */
+async function openverseImageUrl(query, requiredWord = "") {
+  try {
+    const api = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(
+      query,
+    )}&page_size=8`;
+    const r = await fetch(api, { headers: { "User-Agent": IMG_UA } });
+    if (!r.ok) return "";
+    const data = await r.json();
+    const need = (requiredWord || keyNoun(query)).toLowerCase();
+
+    for (const item of data?.results || []) {
+      if (typeof item?.url !== "string" || !/^https:\/\//i.test(item.url)) {
+        continue;
+      }
+      const label = `${item?.title || ""} ${item?.url}`.toLowerCase();
+      if (need && !label.includes(need)) continue;
+      return item.url;
+    }
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+/** "hose clamp pliers" -> "clamp pliers" / "pliers" for broader image search. */
+function shortenQuery(name) {
+  const words = name
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return [words.slice(-2).join(" "), words.slice(-1).join(" ")].filter(Boolean);
+}
+
+/**
+ * Guarantee each tool has a working image. Tries, in order: the model's URL,
+ * Commons search on the full name, Commons on a shortened query, then
+ * Openverse. Each candidate is fetch-verified before being accepted.
+ */
+async function resolveToolImages(tools) {
+  await Promise.all(
+    tools.map(async (tool) => {
+      const [twoWord, oneWord] = shortenQuery(tool.name);
+      const need = keyNoun(tool.name);
+      const dedupe = (queries) => [...new Set(queries.filter(Boolean))];
+
+      // A URL from the model is guesswork, so it has to be verified.
+      if (tool.imageUrl && (await imageWorks(tool.imageUrl))) return;
+
+      // Commons URLs are built from real search hits, so the file is known to
+      // exist — verifying it would just add a throttled round trip. Queries run
+      // narrowest-first and stop at the first hit.
+      for (const query of dedupe([tool.name, twoWord, oneWord && `${oneWord} tool`])) {
+        const url = await commonsImageUrl(query, need);
+        if (url) {
+          tool.imageUrl = url;
+          return;
+        }
+      }
+
+      // Last resort is an arbitrary third-party host, so verify this one.
+      for (const query of dedupe([tool.name, oneWord && `${oneWord} tool`])) {
+        const url = await openverseImageUrl(query, need);
+        if (url && (await imageWorks(url))) {
+          tool.imageUrl = url;
+          return;
+        }
+      }
+
+      tool.imageUrl = "";
+    }),
+  );
+
+  console.log(
+    "[tools] images:",
+    tools.map((t) => `${t.name}=${t.imageUrl ? "ok" : "NONE"}`).join(", "),
+  );
+  return tools;
+}
+
+function normalizeTools(parsed) {
+  const listIn = Array.isArray(parsed.tools) ? parsed.tools : [];
+  const tools = listIn
+    .map((t) => {
+      const name = String(t.name || t.tool || "").trim();
+      const note = String(t.note || t.why || t.use || "").trim();
+      let imageUrl = String(t.imageUrl || t.image || t.url || "").trim();
+      // Only keep direct, hotlink-friendly image URLs; else drop to a UI fallback.
+      if (!/^https:\/\/\S+\.(png|jpe?g|webp|gif)(\?\S*)?$/i.test(imageUrl)) {
+        imageUrl = "";
+      } else {
+        imageUrl = toDisplayableImageUrl(imageUrl);
+      }
+      return { name, note, imageUrl };
+    })
+    .filter((t) => t.name)
+    .slice(0, 5);
+
+  if (!tools.length) throw new Error("No tools found");
+  return tools;
+}
+
+/** Cache tools per (topic + step) so repeats are instant. */
+const toolsCache = new Map();
+const toolsInflight = new Map();
+
+app.post("/api/step-tools", async (req, res) => {
+  try {
+    const topic = String(req.body?.topic || req.body?.videoTitle || "").trim();
+    const stepText = String(req.body?.stepText || "").trim();
+    const stepNumber = Number(req.body?.stepNumber) || null;
+    const videoTitle = String(req.body?.videoTitle || "").trim();
+
+    const focus = stepText || topic || videoTitle;
+    if (!focus) {
+      return res.status(400).json({ error: "topic or stepText is required" });
+    }
+
+    const cacheKey = `${topic}::${stepText}`.toLowerCase().replace(/\s+/g, " ");
+    if (toolsCache.has(cacheKey)) {
+      return res.json({ tools: toolsCache.get(cacheKey), cached: true });
+    }
+    if (toolsInflight.has(cacheKey)) {
+      const tools = await toolsInflight.get(cacheKey);
+      return res.json({ tools, cached: true });
+    }
+
+    const prompt = [
+      topic ? `Task: ${topic}.` : "",
+      stepText
+        ? `The user is on this step${stepNumber ? ` (step ${stepNumber})` : ""}: "${stepText}".`
+        : "",
+      "List the physical tools/equipment needed to do this specific step.",
+      "Use the common, generic name for each tool (e.g. 'socket wrench', not a brand or part number) so it is easy to picture.",
+      "Return ONLY valid JSON matching this schema:",
+      JSON.stringify({
+        tools: [{ name: "tool name", note: "why it's needed (<=6 words)" }],
+      }),
+      "Rules: 2 to 4 tools, most relevant first, no markdown, no image URLs.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const job = (async () => {
+      const startedAt = Date.now();
+      const response = await fetch("https://api.x.ai/v1/responses", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "grok-4.5",
+          temperature: 0.2,
+          input: [
+            {
+              role: "system",
+              content:
+                "You name the physical tools needed for a hands-on step. Output JSON only. Be fast and concise.",
+            },
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.error("Tools error:", data);
+        throw new Error(data?.error || data?.message || "Tool lookup failed");
+      }
+
+      const modelMs = Date.now() - startedAt;
+      const raw = extractResponseText(data);
+      const parsed = parseManualJson(raw);
+      const tools = normalizeTools(parsed);
+      const imagesAt = Date.now();
+      await resolveToolImages(tools);
+      console.log(
+        `[tools] model ${modelMs}ms, images ${Date.now() - imagesAt}ms`,
+      );
+      toolsCache.set(cacheKey, tools);
+      return tools;
+    })();
+
+    toolsInflight.set(cacheKey, job);
+    try {
+      const tools = await job;
+      res.json({ tools, cached: false });
+    } finally {
+      toolsInflight.delete(cacheKey);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Tool lookup failed",
+    });
+  }
+});
+
+const GHOST_PRIMITIVES = new Set([
+  "slide",
+  "lift",
+  "insert",
+  "rotate",
+  "press",
+  "pull",
+]);
+
+function clampUnit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return NaN;
+  return Math.min(1, Math.max(0, n));
+}
+
+/**
+ * Force the model's answer into the exact contract the client animates from.
+ * Anything unusable degrades rather than throws: a bad box becomes null (the
+ * client then shows the trail alone) and an unknown primitive becomes a slide.
+ */
+function normalizeGhost(parsed) {
+  const obj = parsed?.object || {};
+  const rawBox = obj.box || {};
+
+  let box = {
+    x: clampUnit(rawBox.x),
+    y: clampUnit(rawBox.y),
+    w: clampUnit(rawBox.w ?? rawBox.width),
+    h: clampUnit(rawBox.h ?? rawBox.height),
+  };
+  if (
+    ![box.x, box.y, box.w, box.h].every(Number.isFinite) ||
+    box.w < 0.04 ||
+    box.h < 0.04
+  ) {
+    box = null;
+  } else {
+    if (box.x + box.w > 1) box.w = 1 - box.x;
+    if (box.y + box.h > 1) box.h = 1 - box.y;
+  }
+
+  const motion = parsed?.motion || {};
+  const primitive = GHOST_PRIMITIVES.has(String(motion.primitive))
+    ? String(motion.primitive)
+    : "slide";
+
+  const center = box
+    ? { x: box.x + box.w / 2, y: box.y + box.h / 2 }
+    : { x: 0.5, y: 0.5 };
+  const toX = clampUnit(motion?.to?.x);
+  const toY = clampUnit(motion?.to?.y);
+
+  let rotateDeg = Number(motion.rotateDeg);
+  if (!Number.isFinite(rotateDeg)) rotateDeg = 0;
+  rotateDeg = Math.max(-180, Math.min(180, rotateDeg));
+
+  return {
+    label: String(obj.label || obj.name || "").trim().slice(0, 40) || "this",
+    caption: String(parsed?.caption || "").trim().slice(0, 120),
+    box,
+    motion: {
+      primitive,
+      to: {
+        x: Number.isFinite(toX) ? toX : center.x,
+        y: Number.isFinite(toY) ? toY : center.y,
+      },
+      rotateDeg,
+    },
+  };
+}
+
+/**
+ * Only in-flight dedupe here, no result cache: the answer is geometry for one
+ * specific frame, so a cached box would be wrong the moment playback moves.
+ */
+const ghostInflight = new Map();
+
+app.post("/api/ghost", async (req, res) => {
+  try {
+    const question = String(req.body?.question || "").trim();
+    const frame = String(req.body?.frame || "");
+    const videoTitle = String(req.body?.videoTitle || "").trim();
+    const stepText = String(req.body?.stepText || "").trim();
+
+    if (!question) {
+      return res.status(400).json({ error: "question is required" });
+    }
+    if (!frame.startsWith("data:image")) {
+      return res.status(400).json({ error: "a frame image is required" });
+    }
+
+    const key = `${question}::${stepText}`.toLowerCase().replace(/\s+/g, " ");
+    if (ghostInflight.has(key)) {
+      return res.json(await ghostInflight.get(key));
+    }
+
+    const system = [
+      "You plan ONE physical motion for a tool or part visible in a video frame.",
+      "The user will see a translucent ghost of that object animate along the motion you describe, over the paused frame.",
+      "Pick the single object the question is about and locate it in the image.",
+      "Return ONLY valid JSON (no markdown) matching:",
+      '{"object":{"label":"short name","box":{"x":0,"y":0,"w":0,"h":0}},"motion":{"primitive":"slide","to":{"x":0,"y":0},"rotateDeg":0},"caption":"short imperative sentence"}',
+      "All coordinates are normalized 0-1 with origin at the top-left of the image.",
+      "box.x/box.y is the TOP-LEFT corner of a tight box around the object; box.w/box.h is its size.",
+      "motion.to is the CENTER position the object should end up at.",
+      "primitive must be exactly one of: slide, lift, insert, rotate, press, pull.",
+      "Match the real motion: slide to move along a surface, lift to raise, insert to push into place, rotate to turn (set rotateDeg, negative for counter-clockwise), press to push down, pull to draw away.",
+      "For rotate, motion.to may equal the object's current center.",
+      "caption is under 12 words and describes the motion, not the object.",
+      videoTitle ? `Video: ${videoTitle}.` : "",
+      stepText ? `The user is on this step: "${stepText}".` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const job = (async () => {
+      const startedAt = Date.now();
+      const response = await fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "grok-4.5",
+          temperature: 0.2,
+          messages: [
+            { role: "system", content: system },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Viewer question: ${question}\nReturn the JSON for the attached frame.`,
+                },
+                // Latency here is reasoning-bound, not image-token-bound, so
+                // high detail buys box precision at no measurable cost.
+                { type: "image_url", image_url: { url: frame, detail: "high" } },
+              ],
+            },
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.error("Ghost error:", data);
+        throw new Error(data?.error?.message || "Ghost planning failed");
+      }
+
+      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+      const out = normalizeGhost(parseManualJson(raw));
+      console.log(
+        `[ghost] ${out.motion.primitive} "${out.label}" box=${
+          out.box ? "ok" : "NONE"
+        } in ${Date.now() - startedAt}ms`,
+      );
+      return out;
+    })();
+
+    ghostInflight.set(key, job);
+    try {
+      res.json(await job);
+    } finally {
+      ghostInflight.delete(key);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Ghost planning failed",
+    });
+  }
+});
+
+/**
+ * Image proxy — fetch remote tool images server-side with a descriptive
+ * User-Agent so hosts like Wikimedia (which 403 anonymous hotlinks) serve them,
+ * and to sidestep browser CORS.
+ */
+app.get("/api/img", async (req, res) => {
+  try {
+    const url = String(req.query.url || "");
+    if (!/^https?:\/\/\S+$/i.test(url)) {
+      return res.status(400).json({ error: "valid image url required" });
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    let upstream;
+    try {
+      upstream = await fetch(url, {
+        signal: ctrl.signal,
+        redirect: "follow",
+        headers: {
+          "User-Agent": "GrokEye/1.0 (hackathon demo; +https://x.ai)",
+          Accept: "image/avif,image/webp,image/png,image/jpeg,*/*",
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const contentType = upstream.headers.get("content-type") || "";
+    if (!upstream.ok || !contentType.startsWith("image/")) {
+      console.warn(
+        `[img] ${upstream.status} ${contentType || "no-type"} <- ${url.slice(0, 120)}`,
+      );
+      return res.status(upstream.ok ? 415 : upstream.status).end();
+    }
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    console.log(`[img] 200 ${contentType} ${buffer.length}b <- ${url.slice(0, 90)}`);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(buffer);
+  } catch (err) {
+    console.error("Image proxy error:", err);
+    res.status(502).end();
+  }
+});
+
 
 if (isProd) {
   const dist = path.join(root, "dist");

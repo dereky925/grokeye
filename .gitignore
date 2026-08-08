@@ -6,14 +6,15 @@ dist
 *.tsbuildinfo
 .vite
 
-
 .context
 
 AGENTS.md
 CLAUDE.md
 
+.data
 detector/.venv
 detector/**/__pycache__
 *.pt
 *.onnx
 .ultralytics
+*.tsbuildinfo

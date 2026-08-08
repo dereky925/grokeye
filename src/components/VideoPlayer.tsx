@@ -2,9 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import VoiceBubble from "./VoiceBubble";
 import GuidanceStatusChip from "./GuidanceStatusChip";
 import ManualOverlay from "./ManualOverlay";
+import MiniSpotify from "./MiniSpotify";
+import MiniTwitter from "./MiniTwitter";
+import MiniYoutube from "./MiniYoutube";
 import PlayerTransport from "./PlayerTransport";
 import TaskStateChip from "./TaskStateChip";
 import ToolsDropdown from "./ToolsDropdown";
+import ToolsOverlay from "./ToolsOverlay";
 import VideoHighlights from "./VideoHighlights";
 import {
   askGrok,
@@ -14,8 +18,14 @@ import {
   needsVideoContext,
   needsWebSearch,
   useGrokListener,
+  useWakeWord,
+  WAKE_RE,
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
+import { useCameraStream } from "../hooks/useCameraStream";
+import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
+import { useTwitterFeed } from "../hooks/useTwitterFeed";
+import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
 import {
   normalizeLabels,
   normalizeLink,
@@ -27,9 +37,16 @@ import {
   applyManualAction,
   fetchManual,
   parseManualAction,
+  snapPosition,
   speakText,
 } from "../lib/manual";
-import { fetchToolkit, parseToolsAction } from "../lib/tools";
+import {
+  fetchToolkit,
+  fetchTools,
+  listPhrase,
+  parseToolsAction,
+  wantsTools,
+} from "../lib/tools";
 import { fetchVerify, parseVerifyAction } from "../lib/verify";
 import {
   fetchGuidance,
@@ -40,13 +57,21 @@ import {
   findCatalogChoreography,
   type CatalogMotionCue,
 } from "../lib/choreography";
+import { snapCommand } from "../lib/commands";
+import { cropSprite, fetchGhost, wantsGhost } from "../lib/ghost";
+import GhostOverlay from "./GhostOverlay";
+import { parseSpotifyAction } from "../lib/spotify";
+import { parseTwitterAction } from "../lib/twitter";
+import { parseYoutubeAction } from "../lib/youtube";
 import type {
+  GhostState,
   GuidanceCue,
   HighlightLabel,
   HighlightLink,
   ManualOverlayState,
   TaskSession,
   ToolkitState,
+  ToolsState,
   VideoItem,
   VoicePhase,
 } from "../types";
@@ -72,7 +97,7 @@ function looksLikeEcho(heard: string, spoken: string) {
   const raw = heard.toLowerCase();
   // Fresh user commands should never be treated as speaker bleed.
   if (
-    /\b(highlight|circle|outline|label|mark|point|show|find|where|how|which|motion|direction|open|next|previous|close|stop)\b/.test(
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|how|which|motion|direction|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|tweets|feed|elon|musk|starship|spacex|youtube|watch|skip|rewind|manual|ikea|desk|flip)\b/.test(
       raw,
     )
   ) {
@@ -114,6 +139,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const turnInFlightRef = useRef(false);
   const highlightHoldRef = useRef(false);
   const speechFrameRef = useRef<string | null>(null);
+  const toolsRef = useRef<ToolsState | null>(null);
+  const resumeAfterGhostRef = useRef(false);
+  const ghostRef = useRef<GhostState | null>(null);
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
   const [reply, setReply] = useState("");
@@ -131,8 +159,40 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [scanning, setScanning] = useState(false);
   const [holdUntil, setHoldUntil] = useState<number | null>(null);
   const [highlightSeed, setHighlightSeed] = useState<string | null>(null);
+  const [tools, setTools] = useState<ToolsState | null>(null);
+  const [ghost, setGhost] = useState<GhostState | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const [spotifyOpen, setSpotifyOpen] = useState(false);
+  const spotifyOpenRef = useRef(false);
+  const [twitterOpen, setTwitterOpen] = useState(false);
+  const twitterOpenRef = useRef(false);
+  const [cameraId, setCameraId] = useState<string | undefined>(undefined);
+  const live = Boolean(video.live);
+  const camera = useCameraStream({
+    enabled: live,
+    videoRef,
+    deviceId: cameraId,
+  });
+  const [youtubeOpen, setYoutubeOpen] = useState(false);
+  const youtubeOpenRef = useRef(false);
+  const [youtubeSeek, setYoutubeSeek] = useState<{
+    seq: number;
+    seconds: number;
+  } | null>(null);
   const voiceBusy = phase !== "idle";
+  const spotify = useSpotifyPlayer();
+  const twitter = useTwitterFeed();
+  const youtube = useYoutubePlayer();
+
+  useEffect(() => {
+    spotifyOpenRef.current = spotifyOpen;
+  }, [spotifyOpen]);
+  useEffect(() => {
+    twitterOpenRef.current = twitterOpen;
+  }, [twitterOpen]);
+  useEffect(() => {
+    youtubeOpenRef.current = youtubeOpen;
+  }, [youtubeOpen]);
 
   useEffect(() => {
     manualRef.current = manual;
@@ -141,6 +201,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     toolkitRef.current = toolkit;
   }, [toolkit]);
+
+  useEffect(() => {
+    toolsRef.current = tools;
+  }, [tools]);
 
   const commitTask = useCallback((next: TaskSession | null) => {
     taskRef.current = next;
@@ -210,6 +274,16 @@ export default function VideoPlayer({ video, onBack }: Props) {
     if (!turnInFlightRef.current) resumeIfAutoPaused();
   }, [resumeIfAutoPaused]);
 
+  const clearGhost = useCallback(() => {
+    setGhost(null);
+    ghostRef.current = null;
+    if (resumeAfterGhostRef.current) {
+      resumeAfterGhostRef.current = false;
+      const el = videoRef.current;
+      if (el) void el.play().catch(() => {});
+    }
+  }, []);
+
   const stopTts = useCallback(() => {
     const audio = audioRef.current as
       | (HTMLAudioElement & { __resolveSpeak?: () => void })
@@ -237,6 +311,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       commitTask({ ...taskRef.current, stage: "awaiting_action" });
     }
     stopTts();
+    clearGhost();
     setDetecting(false);
     setScanning(false);
     setGuidanceCue(null);
@@ -252,7 +327,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
     resumeIfAutoPaused();
     armMicSoon(350);
-  }, [armMicSoon, commitTask, resumeIfAutoPaused, stopTts]);
+  }, [armMicSoon, clearGhost, commitTask, resumeIfAutoPaused, stopTts]);
 
   // A guide without boxes (not visible / unsafe) still needs a bounded HUD
   // lifetime. Box-backed guides usually clear sooner through VideoHighlights.
@@ -319,7 +394,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   );
 
   const handleQuestion = useCallback(
-    async (heard: string) => {
+    async (heard: string, alternatives: string[] = []) => {
       const sessionId = ++sessionRef.current;
       pendingTaskRef.current = null;
       const el = videoRef.current;
@@ -332,29 +407,287 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setGuidanceCue(null);
       setCatalogMotion(null);
       setPhase("thinking");
+      // A new turn supersedes whatever demo is on screen.
+      if (ghostRef.current) clearGhost();
 
       try {
+        const youtubeAction = parseYoutubeAction(heard, youtubeOpenRef.current);
+        if (youtubeAction?.type === "open_youtube") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          return;
+        }
+        if (youtubeAction?.type === "close_youtube") {
+          setYoutubeOpen(false);
+          youtubeOpenRef.current = false;
+          return;
+        }
+        if (youtubeAction?.type === "search") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          void youtube.search(youtubeAction.query).catch((err) => {
+            setError(err instanceof Error ? err.message : "YouTube search failed");
+          });
+          return;
+        }
+        if (youtubeAction?.type === "play_starship") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          void youtube.playStarship().catch((err) => {
+            setError(err instanceof Error ? err.message : "No Starship webcast found");
+          });
+          return;
+        }
+        if (youtubeAction?.type === "next") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          youtube.next();
+          return;
+        }
+        if (youtubeAction?.type === "previous") {
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          youtube.previous();
+          return;
+        }
+        if (youtubeAction?.type === "seek") {
+          if (!youtubeOpenRef.current || !youtube.current) {
+            setError("Open a YouTube video first, then say “skip 30 seconds”.");
+            return;
+          }
+          setYoutubeSeek((prev) => ({
+            seq: (prev?.seq || 0) + 1,
+            seconds: youtubeAction.seconds,
+          }));
+          return;
+        }
+
+        const twitterAction = parseTwitterAction(heard, twitterOpenRef.current);
+        if (twitterAction?.type === "open_twitter") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          void twitter.openAccount("SpaceX").catch((err) => {
+            setError(err instanceof Error ? err.message : "Twitter failed");
+          });
+          return;
+        }
+        if (twitterAction?.type === "close_twitter") {
+          twitter.setPlaying(null);
+          setTwitterOpen(false);
+          twitterOpenRef.current = false;
+          return;
+        }
+        if (twitterAction?.type === "scroll_next") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          if (!twitter.tweets.length) {
+            void twitter.openAccount("SpaceX").then(() => twitter.scrollNext());
+          } else {
+            twitter.scrollNext();
+          }
+          return;
+        }
+        if (twitterAction?.type === "scroll_prev") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          twitter.scrollPrev();
+          return;
+        }
+        if (twitterAction?.type === "open_account") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          void twitter.openAccount(twitterAction.username).catch((err) => {
+            setError(err instanceof Error ? err.message : "Could not open account");
+          });
+          return;
+        }
+        if (twitterAction?.type === "search") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          void twitter.search(twitterAction.query).catch((err) => {
+            setError(err instanceof Error ? err.message : "Twitter search failed");
+          });
+          return;
+        }
+        if (twitterAction?.type === "play_starship") {
+          // Prefer the YouTube widget for Starship webcasts.
+          setYoutubeOpen(true);
+          youtubeOpenRef.current = true;
+          void youtube.playStarship().catch((err) => {
+            setError(err instanceof Error ? err.message : "No Starship video found");
+          });
+          return;
+        }
+
+        const spotifyAction = parseSpotifyAction(heard, spotifyOpenRef.current);
+        if (spotifyAction?.type === "open_spotify" || spotifyAction?.type === "nudge_play") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          // Don't block the voice loop — otherwise UI sticks on Thinking.
+          void spotify.playBowie().catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Spotify is not ready yet";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "play_query") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          void spotify.playQuery(spotifyAction.query).catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Could not play that";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "next_track") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          void spotify.nextTrack().catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Could not skip track";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "previous_track") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          void spotify.previousTrack().catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Could not go to previous";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "close_spotify") {
+          void spotify.pause().catch(() => {});
+          setSpotifyOpen(false);
+          spotifyOpenRef.current = false;
+          return;
+        }
+
+        // Ahead of the manual router on purpose: "how do I use this jack?"
+        // matches the open-manual regex, but the user wants a demo, not a guide.
+        if (wantsGhost(heard) && el) {
+          el.pause();
+          resumeAfterGhostRef.current = true;
+          const frame = captureFrame(el, { maxW: 1024, quality: 0.8 });
+          if (!frame) throw new Error("Could not capture the frame");
+
+          setUsedVision(true);
+          setGhost({
+            label: "",
+            caption: "",
+            box: { x: 0.4, y: 0.4, w: 0.2, h: 0.2 },
+            motion: { primitive: "slide", to: { x: 0.6, y: 0.4 }, rotateDeg: 0 },
+            spriteUrl: "",
+            loading: true,
+          });
+
+          const m = manualRef.current;
+          let planned;
+          try {
+            planned = await fetchGhost({
+              question: heard,
+              frame,
+              videoTitle: video.title,
+              stepText: m ? m.doc.steps[m.stepIndex]?.text : undefined,
+            });
+          } catch (err) {
+            clearGhost();
+            throw err;
+          }
+          if (sessionId !== sessionRef.current) return;
+
+          // No usable box still gets a demo: trail plus caption, no sprite.
+          const box = planned.box ?? { x: 0.36, y: 0.4, w: 0.28, h: 0.2 };
+          const next: GhostState = {
+            label: planned.label,
+            caption: planned.caption,
+            box,
+            motion: planned.motion,
+            spriteUrl: planned.box ? cropSprite(el, box) : "",
+            loading: false,
+          };
+          setGhost(next);
+          ghostRef.current = next;
+
+          if (planned.caption) {
+            setReply(planned.caption);
+            lastSpokenRef.current = planned.caption;
+            setMicArmed(false);
+            setPhase("speaking");
+            try {
+              const url = await speakText(planned.caption);
+              await playAudioUrl(url, sessionId);
+            } catch {
+              /* the animation is the point — audio is a bonus */
+            }
+          }
+          return;
+        }
+
         const open = Boolean(manualRef.current);
-        const action = parseManualAction(heard, open);
+        const toolsOpen = Boolean(toolsRef.current);
+        // Exact regex first; fall back to fuzzy command snapping over all
+        // recognition alternatives to recover misheard controls.
+        const action =
+          parseManualAction(heard, open, toolsOpen) ??
+          snapCommand([heard, ...alternatives], open);
 
         if (action) {
           // Manual turns don't need the frozen frame — let it play under the card.
           resumeIfAutoPaused();
+
+          // Moving the tools panel is its own thing — never touch the manual.
+          if (action.type === "move_overlay" && action.target === "tools") {
+            const current = toolsRef.current;
+            if (current) {
+              const { x, y } = snapPosition(
+                action.snap,
+                current.x,
+                current.y,
+                168,
+                260,
+              );
+              const next = { ...current, x, y };
+              setTools(next);
+              toolsRef.current = next;
+            }
+            return;
+          }
+
+          // Changing steps invalidates any tools shown for the old step, but
+          // repositioning the manual leaves them valid.
+          if (action.type !== "move_overlay") setTools(null);
+
           if (action.type === "open_manual") {
-            const topic = action.topic || video.title || "sushi";
+            const topic =
+              action.topic || video.manualTopic || video.title || "sushi";
+            const ikeaPdf =
+              video.manualPdf ||
+              (video.id === "ikea" ? "/manuals/micke-desk.pdf" : undefined);
+            const ikeaPages =
+              video.manualPdfPages || (video.id === "ikea" ? 28 : undefined);
             const loading: ManualOverlayState = {
               doc: {
-                title: "Searching the web…",
+                title: ikeaPdf ? "Opening IKEA pamphlet…" : "Searching the web…",
                 topic,
+                mode: ikeaPdf ? "pdf" : "steps",
+                pdfUrl: ikeaPdf,
                 source: {
-                  title: "Searching",
-                  url: "https://x.ai",
-                  siteName: "searching…",
+                  title: ikeaPdf ? "IKEA" : "Searching",
+                  url: ikeaPdf || "https://x.ai",
+                  siteName: ikeaPdf ? "ikea.com" : "searching…",
                 },
                 steps: [
                   {
                     n: 1,
-                    text: "Finding a trusted source and building steps…",
+                    text: ikeaPdf
+                      ? "Loading the official assembly pamphlet…"
+                      : "Finding a trusted source and building steps…",
                   },
                 ],
               },
@@ -365,25 +698,106 @@ export default function VideoPlayer({ video, onBack }: Props) {
             };
             setManual(loading);
             manualRef.current = loading;
-            setReply("One sec…");
 
             const doc = await fetchManual({
               topic,
               videoTitle: video.title,
               videoDescription: video.description,
+              manualPdf: ikeaPdf,
+              manualPdfPages: ikeaPages,
+              videoId: video.id,
             });
             if (sessionId !== sessionRef.current) return;
+            // Never fall back to word-summary steps when we have an official PDF.
+            if (ikeaPdf && doc.mode !== "pdf") {
+              doc.mode = "pdf";
+              doc.pdfUrl = ikeaPdf;
+            }
             const result = applyManualAction(manualRef.current, action, doc);
             setManual(result.state);
             manualRef.current = result.state;
-            await playSpoken(result.speak, sessionId);
+            if (result.speak) {
+              lastSpokenRef.current = result.speak;
+              setMicArmed(false);
+              setPhase("speaking");
+              try {
+                const url = await speakText(result.speak);
+                await playAudioUrl(url, sessionId);
+              } catch {
+                /* overlay already updated */
+              }
+            }
             return;
           }
 
           const result = applyManualAction(manualRef.current, action);
           setManual(result.state);
           manualRef.current = result.state;
-          await playSpoken(result.speak, sessionId);
+          // Read steps aloud; keep panel moves silent.
+          if (result.speak && action.type !== "move_overlay") {
+            lastSpokenRef.current = result.speak;
+            setMicArmed(false);
+            setPhase("speaking");
+            try {
+              const url = await speakText(result.speak);
+              await playAudioUrl(url, sessionId);
+            } catch {
+              /* overlay already updated */
+            }
+          }
+          return;
+        }
+
+        if (wantsTools(heard)) {
+          const m = manualRef.current;
+          const stepText = m ? m.doc.steps[m.stepIndex]?.text : undefined;
+          const stepNumber = m ? m.stepIndex + 1 : null;
+          const topic = m ? m.doc.topic : video.title;
+
+          const toolsX = toolsRef.current?.x ?? 16;
+          const toolsY = toolsRef.current?.y ?? 150;
+          setTools({
+            tools: [],
+            stepNumber,
+            loading: true,
+            x: toolsX,
+            y: toolsY,
+          });
+
+          let found;
+          try {
+            found = await fetchTools({
+              topic,
+              stepText,
+              stepNumber,
+              videoTitle: video.title,
+            });
+          } catch (err) {
+            if (sessionId !== sessionRef.current) return;
+            setTools(null);
+            throw err;
+          }
+          if (sessionId !== sessionRef.current) return;
+          setTools({
+            tools: found,
+            stepNumber,
+            loading: false,
+            x: toolsX,
+            y: toolsY,
+          });
+
+          const summary = found.length
+            ? `You'll need ${listPhrase(found.map((t) => t.name))}.`
+            : "I couldn't find the tools for this step.";
+          lastSpokenRef.current = summary;
+          setMicArmed(false);
+          setPhase("speaking");
+          try {
+            const url = await speakText(summary);
+            await playAudioUrl(url, sessionId);
+          } catch {
+            /* audio is optional — cards are already shown */
+          }
           return;
         }
 
@@ -764,13 +1178,46 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
       }
     },
-    [armMicSoon, clearHighlights, commitTask, playAudioUrl, playSpoken, resumeIfAutoPaused, sealTaskIfReady, video.description, video.detectorPack, video.id, video.title],
+    [
+      armMicSoon,
+      clearGhost,
+      clearHighlights,
+      commitTask,
+      playAudioUrl,
+      playSpoken,
+      resumeIfAutoPaused,
+      sealTaskIfReady,
+      spotify,
+      twitter,
+      youtube,
+      video.description,
+      video.detectorPack,
+      video.id,
+      video.title,
+    ],
   );
+
+  // Mute the main recognizer while Grok is talking — browser STT will hear the
+  // speakers otherwise.
+  const listenerEnabled = micArmed && (phase === "idle" || phase === "listening");
+
+  // Barge-in: while Grok is thinking or talking, a wake-word-only recognizer
+  // takes over so "Hey Grok" can cut the answer short. Only one recognition can
+  // be active at a time, hence the negated listenerEnabled.
+  useWakeWord({
+    enabled: !listenerEnabled && (phase === "thinking" || phase === "speaking"),
+    onWake: () => {
+      // Don't let Grok interrupt itself if its own reply says the wake phrase.
+      if (WAKE_RE.test(lastSpokenRef.current)) return;
+      console.log("[voice] barge-in on wake word");
+      interruptGrok();
+    },
+  });
 
   const { supported, micLive, interim, startCommand, cancelCommand } =
     useGrokListener({
       // Mute recognition while Grok is talking — browser STT will hear speakers otherwise.
-      enabled: micArmed && (phase === "idle" || phase === "listening"),
+      enabled: listenerEnabled,
       onSpeechStart: () => {
         setError(null);
         setReply("");
@@ -787,7 +1234,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           el.volume = 0.02;
         }
       },
-      onQuestion: (text) => {
+      onQuestion: (text, alternatives) => {
         if (looksLikeEcho(text, lastSpokenRef.current)) {
           console.log("[voice] ignoring likely TTS echo:", text);
           setPhase("idle");
@@ -796,7 +1243,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           resumeIfAutoPaused();
           return;
         }
-        void handleQuestion(text);
+        void handleQuestion(text, alternatives);
       },
     });
 
@@ -837,19 +1284,20 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    if (phase === "idle") el.volume = WAKE_DUCK;
-    if (phase === "speaking") el.volume = 0.08;
+    if (phase === "idle") el.volume = spotifyOpen || youtubeOpen ? 0.02 : WAKE_DUCK;
+    if (phase === "speaking") el.volume = 0.05;
     if (phase === "listening") el.volume = 0.02;
-  }, [phase]);
+  }, [phase, spotifyOpen, youtubeOpen]);
 
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
     pendingTaskRef.current = null;
     commitTask(null);
+    if (live) return; // the camera hook owns playback in live mode
     el.volume = WAKE_DUCK;
     void el.play().catch(() => {});
-  }, [commitTask, video.src]);
+  }, [commitTask, video.src, live]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -882,6 +1330,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       }
 
       if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
+        if (live) return; // nothing to scrub through on a camera feed
         event.preventDefault();
         const step = event.shiftKey ? 1 : 5;
         scrubBy(event.code === "ArrowLeft" ? -step : step);
@@ -898,7 +1347,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, startCommand]);
+  }, [phase, startCommand, live]);
 
   useEffect(() => {
     return () => {
@@ -917,7 +1366,29 @@ export default function VideoPlayer({ video, onBack }: Props) {
         <button type="button" className="back-btn" onClick={onBack}>
           ← Library
         </button>
-        <div className="player-title">{video.title}</div>
+        <div className="player-title">
+          {video.title}
+          {live && (
+            <span className="live-pill" title={camera.activeLabel}>
+              <span className="live-pill-dot" />
+              {camera.starting ? "STARTING" : "LIVE"}
+            </span>
+          )}
+        </div>
+        {live && camera.devices.length > 1 && (
+          <select
+            className="camera-select"
+            value={camera.activeDeviceId ?? ""}
+            onChange={(e) => setCameraId(e.target.value)}
+            title="Camera source"
+          >
+            {camera.devices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        )}
         <button
           type="button"
           className={`mic-btn ${voiceBusy || micLive ? "active" : ""} ${micLive && !voiceBusy ? "hot" : ""}`}
@@ -940,9 +1411,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
         <video
           ref={videoRef}
           className="player-video"
-          src={video.src}
+          // srcObject is set by useCameraStream — never both.
+          src={live ? undefined : video.src}
           playsInline
-          loop
+          muted={live}
+          loop={!live}
           onClick={(event) => {
             const el = videoRef.current;
             if (!el) return;
@@ -997,6 +1470,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
             else setHighlights(next);
           }}
         />
+        {ghost && !ghost.loading && (
+          <GhostOverlay
+            videoRef={videoRef}
+            ghost={ghost}
+            onDismiss={clearGhost}
+          />
+        )}
+        {live && camera.starting && !camera.error && (
+          <div className="camera-status" role="status" aria-live="polite">
+            <span className="detect-status-spinner" aria-hidden />
+            <span>Opening the camera…</span>
+          </div>
+        )}
+        {live && camera.error && (
+          <div className="camera-status error" role="alert">
+            {camera.error}
+          </div>
+        )}
         {detecting && (
           <div className="detect-status" role="status" aria-live="polite">
             <span className="detect-status-spinner" aria-hidden />
@@ -1008,6 +1499,54 @@ export default function VideoPlayer({ video, onBack }: Props) {
           onUserControl={() => {
             resumeAfterTurnRef.current = false;
           }}
+        />
+        {ghost?.loading && (
+          <div className="detect-status" role="status" aria-live="polite">
+            <span className="detect-status-spinner" aria-hidden />
+            <span>Working out the motion…</span>
+          </div>
+        )}
+        <MiniSpotify
+          open={spotifyOpen}
+          onClose={() => setSpotifyOpen(false)}
+          configured={spotify.configured}
+          authenticated={spotify.authenticated}
+          activated={spotify.activated}
+          isPlaying={spotify.isPlaying}
+          track={spotify.track}
+          error={spotify.error}
+          onLogin={spotify.login}
+          onEnable={() => {
+            void spotify.enablePlayback().catch(() => {});
+          }}
+        />
+        <MiniTwitter
+          open={twitterOpen}
+          onClose={() => {
+            twitter.setPlaying(null);
+            setTwitterOpen(false);
+          }}
+          configured={twitter.configured}
+          loading={twitter.loading}
+          error={twitter.error}
+          user={twitter.user}
+          queryLabel={twitter.queryLabel}
+          current={twitter.current}
+          index={twitter.index}
+          total={twitter.tweets.length}
+          playing={twitter.playing}
+          onStopVideo={() => twitter.setPlaying(null)}
+        />
+        <MiniYoutube
+          open={youtubeOpen}
+          onClose={() => setYoutubeOpen(false)}
+          loading={youtube.loading}
+          error={youtube.error}
+          queryLabel={youtube.queryLabel}
+          current={youtube.current}
+          index={youtube.index}
+          total={youtube.videos.length}
+          seekRequest={youtubeSeek}
         />
       </div>
 
@@ -1039,6 +1578,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
         />
       )}
 
+      {tools && (
+        <ToolsOverlay
+          state={tools}
+          onChangePosition={(x, y) => {
+            setTools((t) => {
+              if (!t) return t;
+              const next = { ...t, x, y };
+              toolsRef.current = next;
+              return next;
+            });
+          }}
+          onClose={() => {
+            setTools(null);
+            toolsRef.current = null;
+          }}
+        />
+      )}
+
       <VoiceBubble
         phase={phase}
         transcript={transcript || interim}
@@ -1053,7 +1610,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           type="button"
           className="interrupt-btn"
           onClick={interruptGrok}
-          title="Stop Grok"
+          title="Stop Grok — or just say “Hey Grok”"
         >
           <span className="interrupt-icon" aria-hidden />
           Stop

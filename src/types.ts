@@ -5,8 +5,16 @@ export type VideoItem = {
   src: string;
   thumbnail: string;
   durationSeconds: number;
+  /** Optional default how-to topic when the user opens “the manual”. */
+  manualTopic?: string;
+  /** Hosted official PDF manual (preferred over generated text steps). */
+  manualPdf?: string;
+  /** Page count for `manualPdf` flip navigation. */
+  manualPdfPages?: number;
   /** Local YOLO-World pack id (see detector/packs). */
   detectorPack?: string;
+  /** Feed comes from an attached camera instead of `src`. */
+  live?: boolean;
 };
 
 export type VoicePhase =
@@ -48,6 +56,9 @@ export type ManualDoc = {
   topic: string;
   source: ManualSource;
   steps: ManualStep[];
+  /** Official pamphlet PDF (e.g. IKEA assembly instructions). */
+  mode?: "steps" | "pdf";
+  pdfUrl?: string;
 };
 
 export type ManualOverlayState = {
@@ -81,6 +92,21 @@ export type ToolkitState = {
 
 /** "box" = object reticle; "zone" = soft-filled region (areas, not things). */
 export type HighlightKind = "box" | "zone";
+
+/** Per-manual-step tool with a reference image (step tools overlay). */
+export type Tool = {
+  name: string;
+  note: string;
+  imageUrl: string;
+};
+
+export type ToolsState = {
+  tools: Tool[];
+  stepNumber: number | null;
+  loading: boolean;
+  x: number;
+  y: number;
+};
 
 /** Axis-aligned box in normalized video frame coords (origin top-left, 0–1). */
 export type HighlightLabel = {
@@ -131,4 +157,43 @@ export type GuidanceCue = {
   status: GuidanceStatus;
   note: string;
   motion: GuidanceMotion | null;
+};
+
+/** Normalized box without the tracking identity a HighlightLabel carries. */
+export type NormBox = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
+/**
+ * A constrained move the client knows how to animate. The model picks the kind
+ * of motion and its endpoint; easing and keyframes stay on the client so the
+ * result is always smooth.
+ */
+export type GhostPrimitive =
+  | "slide"
+  | "lift"
+  | "insert"
+  | "rotate"
+  | "press"
+  | "pull";
+
+export type GhostMotion = {
+  primitive: GhostPrimitive;
+  /** Target center in normalized frame coords. */
+  to: { x: number; y: number };
+  rotateDeg: number;
+};
+
+export type GhostState = {
+  label: string;
+  caption: string;
+  /** Where the object sits in the paused frame. */
+  box: NormBox;
+  motion: GhostMotion;
+  /** Cropped object pixels; empty when the crop was not possible. */
+  spriteUrl: string;
+  loading: boolean;
 };
