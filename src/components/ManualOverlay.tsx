@@ -89,7 +89,13 @@ export default function ManualOverlay({
     >
       <header className="manual-head">
         <div className="manual-kicker">
-          {loading ? "Loading" : isPdf ? "IKEA pamphlet" : "Manual"}
+          {loading
+            ? "Loading"
+            : isPdf
+              ? manual.doc.source.siteName === "ikea.com"
+                ? "IKEA pamphlet"
+                : "Pamphlet"
+              : "Manual"}
         </div>
         <button type="button" className="manual-close" onClick={onClose}>
           Close
@@ -107,9 +113,9 @@ export default function ManualOverlay({
               alt=""
             />
           </div>
-          <h2 className="manual-title">Opening the IKEA pamphlet…</h2>
+          <h2 className="manual-title">{manual.doc.title}</h2>
           <p className="manual-loading-copy">
-            Loading official MICKE assembly pages.
+            {manual.doc.steps[0]?.text || `Looking up “${manual.doc.topic}”…`}
           </p>
           <div className="manual-loading-bar" aria-hidden>
             <span />
@@ -160,11 +166,20 @@ export default function ManualOverlay({
                   </a>
                 </p>
               ) : (
-                <canvas ref={canvasRef} className="manual-pdf-canvas" />
+                // Keyed by document so a freshly requested pamphlet never shows
+                // the previous one's rendered page while its own is in flight.
+                <canvas
+                  key={manual.doc.pdfUrl}
+                  ref={canvasRef}
+                  className="manual-pdf-canvas"
+                />
               )}
             </div>
           ) : (
-            <p className="manual-step-text" key={manual.stepIndex}>
+            <p
+              className="manual-step-text"
+              key={`${manual.doc.title}:${manual.stepIndex}`}
+            >
               <span className="manual-step-num">{current}.</span> {step?.text}
             </p>
           )}

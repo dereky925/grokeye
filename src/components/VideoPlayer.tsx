@@ -71,6 +71,7 @@ import type {
   GuidanceCue,
   HighlightLabel,
   HighlightLink,
+  ManualDoc,
   ManualOverlayState,
   TaskSession,
   ToolkitState,
@@ -756,16 +757,31 @@ export default function VideoPlayer({ video, onBack }: Props) {
           if (action.type !== "move_overlay") setTools(null);
 
           if (action.type === "open_manual") {
-            const ikeaPdf =
-              video.manualPdf ||
-              (video.id === "ikea" ? "/manuals/micke-desk.pdf" : undefined);
-            const ikeaPages =
-              video.manualPdfPages || (video.id === "ikea" ? 28 : undefined);
+            const requestedTopic = action.topic || video.manualTopic;
+            // The video's bundled pamphlet is only the default when the user
+            // didn't name a different subject — "show me a sushi guide" on the
+            // IKEA video must not open the MICKE pamphlet.
+            const topicWantsPamphlet =
+              !requestedTopic ||
+              /\b(ikea|micke)\b/i.test(requestedTopic) ||
+              (/\bdesk\b/i.test(requestedTopic) &&
+                /\b(manual|assembl|instruction)/i.test(requestedTopic));
+            const ikeaPdf = topicWantsPamphlet
+              ? video.manualPdf ||
+                (video.id === "ikea" ? "/manuals/micke-desk.pdf" : undefined)
+              : undefined;
+            const ikeaPages = topicWantsPamphlet
+              ? video.manualPdfPages || (video.id === "ikea" ? 28 : undefined)
+              : undefined;
             const loading: ManualOverlayState = {
               doc: {
-                title: ikeaPdf ? "Opening IKEA pamphlet…" : "Searching the web…",
+                title: ikeaPdf
+                  ? "Opening the IKEA pamphlet…"
+                  : requestedTopic
+                    ? `Finding a guide: ${requestedTopic}`
+                    : "Searching the web…",
                 // Placeholder only; the real topic may still need a vision call.
-                topic: action.topic || video.manualTopic || heard,
+                topic: requestedTopic || heard,
                 mode: ikeaPdf ? "pdf" : "steps",
                 pdfUrl: ikeaPdf,
                 source: {
@@ -789,30 +805,51 @@ export default function VideoPlayer({ video, onBack }: Props) {
             };
             setManual(loading);
             manualRef.current = loading;
+            // If this turn dies before the real doc lands, the placeholder must
+            // not survive it — otherwise the pane sits on "loading" forever and
+            // bleeds into the next request.
+            const clearIfStillPlaceholder = () => {
+              if (manualRef.current === loading) {
+                setManual(null);
+                manualRef.current = null;
+              }
+            };
 
             // A live feed has no meaningful title, so never let it stand in as
             // the topic — that's how "open this water bottle" turned into a
             // guide for using the camera. Ask Grok to name what it sees instead.
-            let topic = action.topic || video.manualTopic;
+            let topic = requestedTopic;
             if (!topic && live && el) {
               const frame = captureFrame(el, { maxW: 1024, quality: 0.8 });
               topic = frame
                 ? await identifyTopicFromFrame(frame, heard)
                 : undefined;
-              if (sessionId !== sessionRef.current) return;
+              if (sessionId !== sessionRef.current) {
+                clearIfStillPlaceholder();
+                return;
+              }
             }
             if (!topic) topic = live ? heard : video.title || "sushi";
 
-            const doc = await fetchManual({
-              topic,
-              // A live feed's title describes the camera, not the subject.
-              videoTitle: live ? undefined : video.title,
-              videoDescription: live ? undefined : video.description,
-              manualPdf: ikeaPdf,
-              manualPdfPages: ikeaPages,
-              videoId: video.id,
-            });
-            if (sessionId !== sessionRef.current) return;
+            let doc: ManualDoc;
+            try {
+              doc = await fetchManual({
+                topic,
+                // A live feed's title describes the camera, not the subject.
+                videoTitle: live ? undefined : video.title,
+                videoDescription: live ? undefined : video.description,
+                manualPdf: ikeaPdf,
+                manualPdfPages: ikeaPages,
+                videoId: topicWantsPamphlet ? video.id : undefined,
+              });
+            } catch (err) {
+              clearIfStillPlaceholder();
+              throw err;
+            }
+            if (sessionId !== sessionRef.current) {
+              clearIfStillPlaceholder();
+              return;
+            }
             // Never fall back to word-summary steps when we have an official PDF.
             if (ikeaPdf && doc.mode !== "pdf") {
               doc.mode = "pdf";
