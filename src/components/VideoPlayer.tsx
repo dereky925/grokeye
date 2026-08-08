@@ -16,6 +16,7 @@ import {
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
 import { useCameraStream } from "../hooks/useCameraStream";
+import { useFrameBuffer } from "../hooks/useFrameBuffer";
 import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
 import { useTwitterFeed } from "../hooks/useTwitterFeed";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
@@ -28,6 +29,7 @@ import { detectColorTargets } from "../lib/colorDetect";
 import {
   applyManualAction,
   fetchManual,
+  identifyTopicFromFrame,
   parseManualAction,
   snapPosition,
   speakText,
@@ -35,11 +37,14 @@ import {
 import { snapCommand } from "../lib/commands";
 import { cropSprite, fetchGhost, wantsGhost } from "../lib/ghost";
 import GhostOverlay from "./GhostOverlay";
+import FlipReview from "./FlipReview";
+import { fetchFlipReview, selectAttemptFrames, wantsFlipReview } from "../lib/flip";
 import { fetchTools, listPhrase, wantsTools } from "../lib/tools";
 import { parseSpotifyAction } from "../lib/spotify";
 import { parseTwitterAction } from "../lib/twitter";
 import { parseYoutubeAction } from "../lib/youtube";
 import type {
+  FlipReviewState,
   GhostState,
   HighlightLabel,
   ManualOverlayState,
@@ -116,11 +121,20 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const twitterOpenRef = useRef(false);
   const [cameraId, setCameraId] = useState<string | undefined>(undefined);
   const live = Boolean(video.live);
+  const flipMode = video.mode === "flip";
   const camera = useCameraStream({
     enabled: live,
     videoRef,
     deviceId: cameraId,
   });
+  // A flip is over in under a second, so the frames have to already be in hand
+  // by the time the user asks about it.
+  const { read: readFlipFrames } = useFrameBuffer({
+    enabled: live && flipMode,
+    videoRef,
+  });
+  const [flipReview, setFlipReview] = useState<FlipReviewState | null>(null);
+  const flipReviewRef = useRef<FlipReviewState | null>(null);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const youtubeOpenRef = useRef(false);
   const [youtubeSeek, setYoutubeSeek] = useState<{
@@ -149,6 +163,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     toolsRef.current = tools;
   }, [tools]);
+
+  useEffect(() => {
+    flipReviewRef.current = flipReview;
+  }, [flipReview]);
 
   const [micArmed, setMicArmed] = useState(true);
   const [listenActivity, setListenActivity] = useState(0);
@@ -429,6 +447,55 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
+        // Flip coach owns "how did I do" while it is the active mode. The
+        // attempt is already over, so this reads back through the frame buffer
+        // instead of capturing now.
+        if (flipMode && wantsFlipReview(heard)) {
+          const picked = selectAttemptFrames(readFlipFrames());
+          if (picked.length < 2) {
+            setReply("I need to see a flip first — try one and ask again.");
+            setPhase("idle");
+            return;
+          }
+
+          const strip = picked.map((f) => f.url);
+          const loadingState: FlipReviewState = {
+            review: null,
+            strip,
+            loading: true,
+            x: flipReviewRef.current?.x ?? 24,
+            y: flipReviewRef.current?.y ?? 96,
+          };
+          setFlipReview(loadingState);
+          flipReviewRef.current = loadingState;
+          setUsedVision(true);
+
+          const review = await fetchFlipReview({ question: heard, frames: strip });
+          if (sessionId !== sessionRef.current) return;
+
+          const done: FlipReviewState = {
+            ...loadingState,
+            review,
+            loading: false,
+          };
+          setFlipReview(done);
+          flipReviewRef.current = done;
+
+          if (review.spoken) {
+            setReply(review.spoken);
+            lastSpokenRef.current = review.spoken;
+            setMicArmed(false);
+            setPhase("speaking");
+            try {
+              const url = await speakText(review.spoken);
+              await playAudioUrl(url, sessionId);
+            } catch {
+              /* the panel already has the verdict */
+            }
+          }
+          return;
+        }
+
         // Ahead of the manual router on purpose: "how do I use this jack?"
         // matches the open-manual regex, but the user wants a demo, not a guide.
         if (wantsGhost(heard) && el) {
@@ -522,8 +589,6 @@ export default function VideoPlayer({ video, onBack }: Props) {
           if (action.type !== "move_overlay") setTools(null);
 
           if (action.type === "open_manual") {
-            const topic =
-              action.topic || video.manualTopic || video.title || "sushi";
             const ikeaPdf =
               video.manualPdf ||
               (video.id === "ikea" ? "/manuals/micke-desk.pdf" : undefined);
@@ -532,7 +597,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
             const loading: ManualOverlayState = {
               doc: {
                 title: ikeaPdf ? "Opening IKEA pamphlet…" : "Searching the web…",
-                topic,
+                // Placeholder only; the real topic may still need a vision call.
+                topic: action.topic || video.manualTopic || heard,
                 mode: ikeaPdf ? "pdf" : "steps",
                 pdfUrl: ikeaPdf,
                 source: {
@@ -557,10 +623,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
             setManual(loading);
             manualRef.current = loading;
 
+            // A live feed has no meaningful title, so never let it stand in as
+            // the topic — that's how "open this water bottle" turned into a
+            // guide for using the camera. Ask Grok to name what it sees instead.
+            let topic = action.topic || video.manualTopic;
+            if (!topic && live && el) {
+              const frame = captureFrame(el, { maxW: 1024, quality: 0.8 });
+              topic = frame
+                ? await identifyTopicFromFrame(frame, heard)
+                : undefined;
+              if (sessionId !== sessionRef.current) return;
+            }
+            if (!topic) topic = live ? heard : video.title || "sushi";
+
             const doc = await fetchManual({
               topic,
-              videoTitle: video.title,
-              videoDescription: video.description,
+              // A live feed's title describes the camera, not the subject.
+              videoTitle: live ? undefined : video.title,
+              videoDescription: live ? undefined : video.description,
               manualPdf: ikeaPdf,
               manualPdfPages: ikeaPages,
               videoId: video.id,
@@ -783,7 +863,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
     [
       armMicSoon,
       clearGhost,
+      flipMode,
+      live,
       playAudioUrl,
+      readFlipFrames,
       spotify,
       twitter,
       youtube,
@@ -1113,6 +1196,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
           onClose={() => {
             setTools(null);
             toolsRef.current = null;
+          }}
+        />
+      )}
+
+      {flipReview && (
+        <FlipReview
+          state={flipReview}
+          onChangePosition={(x, y) => {
+            setFlipReview((f) => {
+              if (!f) return f;
+              const next = { ...f, x, y };
+              flipReviewRef.current = next;
+              return next;
+            });
+          }}
+          onClose={() => {
+            setFlipReview(null);
+            flipReviewRef.current = null;
           }}
         />
       )}

@@ -1843,3 +1843,248 @@ video {
     opacity: 0.35;
   }
 }
+
+.flip-review {
+  position: absolute;
+  z-index: 57;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  padding: 0.75rem 0.85rem 0.7rem;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 10, 12, 0.82);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  pointer-events: auto;
+  animation: rise 0.3s ease both;
+}
+
+.flip-review.dragging {
+  cursor: grabbing;
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.flip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.flip-kicker {
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.flip-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.15rem 0.2rem;
+  font-size: 0.78rem;
+}
+
+.flip-close:hover {
+  color: var(--text);
+}
+
+.flip-strip {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 0.7rem;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.flip-strip img {
+  flex: 1 1 0;
+  min-width: 0;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  opacity: 0.85;
+}
+
+.flip-verdict {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+.flip-verdict-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.flip-verdict.landed .flip-verdict-dot {
+  background: #34d399;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.6);
+}
+
+.flip-verdict.missed .flip-verdict-dot {
+  background: #f87171;
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.6);
+}
+
+.flip-factors {
+  margin: 0.75rem 0 0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.flip-factor dt {
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.flip-factor dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.flip-fixes {
+  margin-top: 0.85rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.flip-fixes-label {
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.flip-fixes ol {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.flip-loading {
+  padding: 0.35rem 0 0.2rem;
+}
+
+.flip-loading-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.flip-loading-bar span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.55);
+  animation: flip-scan 1.1s ease-in-out infinite;
+}
+
+.flip-loading-copy {
+  margin: 0.6rem 0 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.flip-hint {
+  margin-top: 0.75rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+@keyframes flip-scan {
+  0% {
+    transform: translateX(-40%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.video-card.coach {
+  border-color: rgba(120, 170, 255, 0.28);
+}
+
+.video-card.coach:hover {
+  border-color: rgba(120, 170, 255, 0.5);
+  box-shadow: 0 18px 50px rgba(0, 40, 120, 0.28);
+}
+
+.video-card.coach .live-thumb {
+  background: radial-gradient(
+      120% 90% at 50% 20%,
+      rgba(120, 170, 255, 0.18),
+      transparent 70%
+    ),
+    #0b0b0d;
+}
+
+/* A bottle mid-rotation: tilted body with a cap. */
+.flip-thumb-icon {
+  width: 20px;
+  height: 40px;
+  border-radius: 6px 6px 8px 8px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  position: relative;
+  transform: rotate(38deg);
+  animation: flip-spin 2.6s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+.flip-thumb-icon::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -9px;
+  transform: translateX(-50%);
+  width: 9px;
+  height: 8px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+/* Water settled in the base. */
+.flip-thumb-icon::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 38%;
+  border-radius: 0 0 6px 6px;
+  background: rgba(120, 170, 255, 0.75);
+}
+
+@keyframes flip-spin {
+  0% {
+    transform: rotate(20deg);
+  }
+  55% {
+    transform: rotate(380deg);
+  }
+  100% {
+    transform: rotate(380deg);
+  }
+}
