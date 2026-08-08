@@ -486,6 +486,251 @@ app.post("/api/manual", async (req, res) => {
   }
 });
 
+/**
+ * Wikimedia now 403s anonymous hotlinks to upload.wikimedia.org, but the
+ * Special:FilePath endpoint on commons.wikimedia.org serves fine (302 → image).
+ * Rewrite any upload.* URL the model returns into that form.
+ */
+function toDisplayableImageUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname !== "upload.wikimedia.org") return url;
+    const parts = u.pathname.split("/").filter(Boolean);
+    const thumbIdx = parts.indexOf("thumb");
+    const filename = thumbIdx !== -1 ? parts[thumbIdx + 3] : parts[parts.length - 1];
+    if (!filename) return url;
+    return `https://commons.wikimedia.org/wiki/Special:FilePath/${filename}?width=320`;
+  } catch {
+    return url;
+  }
+}
+
+const IMG_UA = "GrokEye/1.0 (hackathon demo; +https://x.ai)";
+
+/** Confirm a URL actually serves an image (short timeout, body discarded). */
+async function imageWorks(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 7000);
+  try {
+    const r = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { "User-Agent": IMG_UA, Accept: "image/*" },
+    });
+    const ct = r.headers.get("content-type") || "";
+    const ok = r.ok && ct.startsWith("image/");
+    try {
+      await r.body?.cancel();
+    } catch {
+      /* ignore */
+    }
+    return ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Find a reliable, hotlink-safe image for a tool via Wikimedia Commons search. */
+async function commonsImageUrl(query) {
+  try {
+    const api = `https://commons.wikimedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
+      query,
+    )}&srnamespace=6&srlimit=1&format=json`;
+    const r = await fetch(api, { headers: { "User-Agent": IMG_UA } });
+    const data = await r.json();
+    const title = data?.query?.search?.[0]?.title || "";
+    const file = title.replace(/^File:/, "").trim();
+    if (!file || !/\.(png|jpe?g|webp)$/i.test(file)) return "";
+    return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(
+      file,
+    )}?width=320`;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Guarantee each tool has a working image: try the model's URL, then a
+ * Commons search fallback. Runs all tools in parallel.
+ */
+async function resolveToolImages(tools) {
+  await Promise.all(
+    tools.map(async (tool) => {
+      const candidates = [];
+      if (tool.imageUrl) candidates.push(tool.imageUrl);
+      const commons = await commonsImageUrl(tool.name);
+      if (commons) candidates.push(commons);
+
+      for (const candidate of candidates) {
+        if (await imageWorks(candidate)) {
+          tool.imageUrl = candidate;
+          return;
+        }
+      }
+      tool.imageUrl = "";
+    }),
+  );
+  return tools;
+}
+
+function normalizeTools(parsed) {
+  const listIn = Array.isArray(parsed.tools) ? parsed.tools : [];
+  const tools = listIn
+    .map((t) => {
+      const name = String(t.name || t.tool || "").trim();
+      const note = String(t.note || t.why || t.use || "").trim();
+      let imageUrl = String(t.imageUrl || t.image || t.url || "").trim();
+      // Only keep direct, hotlink-friendly image URLs; else drop to a UI fallback.
+      if (!/^https:\/\/\S+\.(png|jpe?g|webp|gif)(\?\S*)?$/i.test(imageUrl)) {
+        imageUrl = "";
+      } else {
+        imageUrl = toDisplayableImageUrl(imageUrl);
+      }
+      return { name, note, imageUrl };
+    })
+    .filter((t) => t.name)
+    .slice(0, 5);
+
+  if (!tools.length) throw new Error("No tools found");
+  return tools;
+}
+
+/** Cache tools per (topic + step) so repeats are instant. */
+const toolsCache = new Map();
+const toolsInflight = new Map();
+
+app.post("/api/tools", async (req, res) => {
+  try {
+    const topic = String(req.body?.topic || req.body?.videoTitle || "").trim();
+    const stepText = String(req.body?.stepText || "").trim();
+    const stepNumber = Number(req.body?.stepNumber) || null;
+    const videoTitle = String(req.body?.videoTitle || "").trim();
+
+    const focus = stepText || topic || videoTitle;
+    if (!focus) {
+      return res.status(400).json({ error: "topic or stepText is required" });
+    }
+
+    const cacheKey = `${topic}::${stepText}`.toLowerCase().replace(/\s+/g, " ");
+    if (toolsCache.has(cacheKey)) {
+      return res.json({ tools: toolsCache.get(cacheKey), cached: true });
+    }
+    if (toolsInflight.has(cacheKey)) {
+      const tools = await toolsInflight.get(cacheKey);
+      return res.json({ tools, cached: true });
+    }
+
+    const prompt = [
+      topic ? `Task: ${topic}.` : "",
+      stepText
+        ? `The user is on this step${stepNumber ? ` (step ${stepNumber})` : ""}: "${stepText}".`
+        : "",
+      "List the physical tools/equipment needed to do this specific step.",
+      "Use web search to find a real, hotlink-friendly product/reference image for each tool.",
+      "Prefer direct image files from Wikimedia Commons (upload.wikimedia.org) or major retailers; the URL MUST end in .jpg, .png, or .webp.",
+      "Return ONLY valid JSON matching this schema:",
+      JSON.stringify({
+        tools: [
+          { name: "tool name", note: "why it's needed (<=6 words)", imageUrl: "https://...jpg" },
+        ],
+      }),
+      "Rules: 2 to 4 tools, most relevant first, no markdown, real https image URLs ending in an image extension.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const job = (async () => {
+      const response = await fetch("https://api.x.ai/v1/responses", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "grok-4.5",
+          tools: [{ type: "web_search" }],
+          temperature: 0.2,
+          input: [
+            {
+              role: "system",
+              content:
+                "You identify the tools needed for a hands-on step and find real, hotlink-friendly images. Output JSON only. Be fast and concise.",
+            },
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.error("Tools error:", data);
+        throw new Error(data?.error || data?.message || "Tool lookup failed");
+      }
+
+      const raw = extractResponseText(data);
+      const parsed = parseManualJson(raw);
+      const tools = normalizeTools(parsed);
+      await resolveToolImages(tools);
+      toolsCache.set(cacheKey, tools);
+      return tools;
+    })();
+
+    toolsInflight.set(cacheKey, job);
+    try {
+      const tools = await job;
+      res.json({ tools, cached: false });
+    } finally {
+      toolsInflight.delete(cacheKey);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Tool lookup failed",
+    });
+  }
+});
+
+/**
+ * Image proxy — fetch remote tool images server-side with a descriptive
+ * User-Agent so hosts like Wikimedia (which 403 anonymous hotlinks) serve them,
+ * and to sidestep browser CORS.
+ */
+app.get("/api/img", async (req, res) => {
+  try {
+    const url = String(req.query.url || "");
+    if (!/^https?:\/\/\S+$/i.test(url)) {
+      return res.status(400).json({ error: "valid image url required" });
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    let upstream;
+    try {
+      upstream = await fetch(url, {
+        signal: ctrl.signal,
+        redirect: "follow",
+        headers: {
+          "User-Agent": "GrokEye/1.0 (hackathon demo; +https://x.ai)",
+          Accept: "image/avif,image/webp,image/png,image/jpeg,*/*",
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const contentType = upstream.headers.get("content-type") || "";
+    if (!upstream.ok || !contentType.startsWith("image/")) {
+      return res.status(upstream.ok ? 415 : upstream.status).end();
+    }
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(buffer);
+  } catch (err) {
+    console.error("Image proxy error:", err);
+    res.status(502).end();
+  }
+});
+
 app.use(express.static(path.join(root, "public")));
 
 if (isProd) {

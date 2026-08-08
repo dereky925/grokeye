@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import VoiceBubble from "./VoiceBubble";
 import ManualOverlay from "./ManualOverlay";
+import ToolsOverlay from "./ToolsOverlay";
 import VideoHighlights from "./VideoHighlights";
 import {
   askGrok,
@@ -19,10 +20,14 @@ import {
   applyManualAction,
   fetchManual,
   parseManualAction,
+  speakText,
 } from "../lib/manual";
+import { snapCommand } from "../lib/commands";
+import { fetchTools, listPhrase, wantsTools } from "../lib/tools";
 import type {
   HighlightLabel,
   ManualOverlayState,
+  ToolsState,
   VideoItem,
   VoicePhase,
 } from "../types";
@@ -73,6 +78,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [ttsAudio, setTtsAudio] = useState<HTMLAudioElement | null>(null);
   const [usedVision, setUsedVision] = useState(false);
   const [manual, setManual] = useState<ManualOverlayState | null>(null);
+  const [tools, setTools] = useState<ToolsState | null>(null);
   const [highlights, setHighlights] = useState<HighlightLabel[]>([]);
   const [detecting, setDetecting] = useState(false);
   const voiceBusy = phase !== "idle";
@@ -180,7 +186,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   }, [stopTts]);
 
   const handleQuestion = useCallback(
-    async (heard: string) => {
+    async (heard: string, alternatives: string[] = []) => {
       const sessionId = ++sessionRef.current;
       const el = videoRef.current;
       setTranscript(heard);
@@ -191,9 +197,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
       try {
         const open = Boolean(manualRef.current);
-        const action = parseManualAction(heard, open);
+        // Exact regex first; fall back to fuzzy command snapping over all
+        // recognition alternatives to recover misheard controls.
+        const action =
+          parseManualAction(heard, open) ??
+          snapCommand([heard, ...alternatives], open);
 
         if (action) {
+          // Navigating the manual invalidates any tools shown for the old step.
+          setTools(null);
           if (action.type === "open_manual") {
             const topic = action.topic || video.title || "sushi";
             const loading: ManualOverlayState = {
@@ -237,6 +249,45 @@ export default function VideoPlayer({ video, onBack }: Props) {
           const result = applyManualAction(manualRef.current, action);
           setManual(result.state);
           manualRef.current = result.state;
+          return;
+        }
+
+        if (wantsTools(heard)) {
+          const m = manualRef.current;
+          const stepText = m ? m.doc.steps[m.stepIndex]?.text : undefined;
+          const stepNumber = m ? m.stepIndex + 1 : null;
+          const topic = m ? m.doc.topic : video.title;
+
+          setTools({ tools: [], stepNumber, loading: true });
+
+          let found;
+          try {
+            found = await fetchTools({
+              topic,
+              stepText,
+              stepNumber,
+              videoTitle: video.title,
+            });
+          } catch (err) {
+            if (sessionId !== sessionRef.current) return;
+            setTools(null);
+            throw err;
+          }
+          if (sessionId !== sessionRef.current) return;
+          setTools({ tools: found, stepNumber, loading: false });
+
+          const summary = found.length
+            ? `You'll need ${listPhrase(found.map((t) => t.name))}.`
+            : "I couldn't find the tools for this step.";
+          lastSpokenRef.current = summary;
+          setMicArmed(false);
+          setPhase("speaking");
+          try {
+            const url = await speakText(summary);
+            await playAudioUrl(url, sessionId);
+          } catch {
+            /* audio is optional — cards are already shown */
+          }
           return;
         }
 
@@ -374,12 +425,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setPhase("listening");
       if (videoRef.current) videoRef.current.volume = 0.02;
     },
-    onQuestion: (text) => {
+    onQuestion: (text, alternatives) => {
       if (looksLikeEcho(text, lastSpokenRef.current)) {
         console.log("[voice] ignoring likely TTS echo:", text);
         return;
       }
-      void handleQuestion(text);
+      void handleQuestion(text, alternatives);
     },
   });
 
@@ -551,6 +602,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
             manualRef.current = null;
           }}
         />
+      )}
+
+      {tools && (
+        <ToolsOverlay state={tools} onClose={() => setTools(null)} />
       )}
 
       <VoiceBubble

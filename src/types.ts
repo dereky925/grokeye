@@ -42,6 +42,18 @@ export type ManualOverlayState = {
   loading?: boolean;
 };
 
+export type Tool = {
+  name: string;
+  note: string;
+  imageUrl: string;
+};
+
+export type ToolsState = {
+  tools: Tool[];
+  stepNumber: number | null;
+  loading: boolean;
+};
+
 /** Axis-aligned box in normalized video frame coords (origin top-left, 0–1). */
 export type HighlightLabel = {
   id: string;

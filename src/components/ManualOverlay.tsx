@@ -151,7 +151,7 @@ export default function ManualOverlay({
             <span className="manual-step-num">{current}.</span> {step?.text}
           </p>
 
-          <p className="manual-hint">Say “next step” · drag to move</p>
+          <p className="manual-hint">Say “next step” or “previous step” · drag to move</p>
         </>
       )}
     </aside>
