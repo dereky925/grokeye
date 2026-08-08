@@ -11,7 +11,7 @@ type Props = {
   usedVision?: boolean;
 };
 
-const EXIT_MS = 280;
+export const VOICE_BUBBLE_EXIT_MS = 280;
 
 export default function VoiceBubble({
   phase,
@@ -38,7 +38,7 @@ export default function VoiceBubble({
     const id = window.setTimeout(() => {
       setMounted(false);
       setLeaving(false);
-    }, EXIT_MS);
+    }, VOICE_BUBBLE_EXIT_MS);
     return () => window.clearTimeout(id);
   }, [visible, phase, mounted]);
 
@@ -78,7 +78,9 @@ export default function VoiceBubble({
             </p>
           )}
           {renderPhase === "thinking" && (
-            <p className="voice-transcript">{transcript}</p>
+            <p className={`voice-transcript ${reply ? "reply" : ""}`}>
+              {reply || transcript}
+            </p>
           )}
           {(renderPhase === "speaking" || renderPhase === "error") && (
             <p className={`voice-transcript ${reply ? "reply" : ""}`}>

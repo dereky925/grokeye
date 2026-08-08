@@ -14,6 +14,8 @@ export type CatalogMotionCue = {
   videoId: string;
   start: number;
   end: number;
+  /** Representative frame used by the visual regression preview. */
+  previewAt: number;
   scene: string;
   note: string;
   label: string;
@@ -41,6 +43,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     videoId: "sushi",
     start: 4,
     end: 20,
+    previewAt: 12,
     scene: "Rice is being spread across the nori on a bamboo rolling mat.",
     note: "Trace → spread to the edges",
     label: "Spread edge-to-edge",
@@ -60,6 +63,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     videoId: "pov-copper-plumbing",
     start: 0,
     end: 19,
+    previewAt: 2,
     scene: "A straight copper tube is seated in a lever pipe bender and bent around its former.",
     note: "Trace → bend around the former",
     label: "Bend to the angle mark",
@@ -78,7 +82,8 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     id: "plumbing-fit-run",
     videoId: "pov-copper-plumbing",
     start: 104,
-    end: 160,
+    end: 150,
+    previewAt: 135,
     scene: "Cut copper lengths and elbow fittings are being routed through the open floor/ceiling run.",
     note: "Trace → feed into the run",
     label: "Feed square into fitting",
@@ -95,15 +100,16 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     videoId: "pov-pc-build-fail",
     start: 5.5,
     end: 11.5,
+    previewAt: 8,
     scene: "The novice builder is matching the AIO/fan lead connectors above the radiator.",
     note: "Trace → match the keyed plug",
     label: "Align the keyed edges",
     mode: "translate",
     outline:
-      "M 603 270 L 644 278 L 659 305 L 647 338 L 617 345 L 594 322 L 591 289 Z M 612 283 L 636 288 L 644 306 L 636 327 L 618 331 L 605 316 L 604 294 Z",
-    delta: [62, 44],
-    motionPath: "M 628 306 C 648 316 668 332 689 351",
-    labelAt: [690, 292],
+      "M 603 170 L 644 178 L 659 205 L 647 238 L 617 245 L 594 222 L 591 189 Z M 612 183 L 636 188 L 644 206 L 636 227 L 618 231 L 605 216 L 604 194 Z",
+    delta: [42, 58],
+    motionPath: "M 628 206 C 642 222 655 240 670 262",
+    labelAt: [686, 248],
     keywords: ["plug", "connector", "fan", "cable", "aio", "connect"],
   },
   {
@@ -111,6 +117,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     videoId: "pov-pc-build-cpu-ram",
     start: 72,
     end: 101,
+    previewAt: 82,
     scene: "The Intel CPU is aligned over the open LGA1700 socket, lowered flat, then retained.",
     note: "Trace → lower straight down",
     label: "Lower flat—do not slide",
@@ -128,16 +135,17 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     videoId: "pov-pc-build-cpu-ram",
     start: 118,
     end: 155,
+    previewAt: 140,
     scene: "DDR4 DIMMs are aligned with the keyed slots and pressed evenly until the latches click.",
     note: "Trace → press both ends evenly",
     label: "Press until both latches click",
     mode: "translate",
     outline:
-      "M 309 330 L 904 330 L 921 346 L 914 378 L 641 378 L 629 388 L 614 378 L 322 378 L 302 361 Z",
-    delta: [0, 62],
-    motionPath: "M 612 356 C 612 378 612 404 612 435",
-    detailPaths: ["M 329 348 L 598 348", "M 650 348 L 893 348"],
-    labelAt: [744, 430],
+      "M 544 157 L 584 158 L 586 294 L 596 307 L 586 321 L 589 431 L 548 430 L 545 321 L 535 307 L 545 294 Z",
+    delta: [0, 36],
+    motionPath: "M 566 228 C 566 275 566 326 568 382",
+    detailPaths: ["M 554 178 L 574 179 L 575 286", "M 556 333 L 558 411"],
+    labelAt: [640, 360],
     keywords: ["ram", "memory", "dimm", "press", "seat", "install"],
   },
   {
@@ -145,6 +153,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     videoId: "pov-pc-build-gpu",
     start: 36,
     end: 64,
+    previewAt: 48,
     scene: "The rear PCIe slot covers are loosened and removed before the graphics card is installed.",
     note: "Trace → lift the slot cover out",
     label: "Remove matching slot covers",
@@ -159,22 +168,23 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
   {
     id: "gpu-seat-card",
     videoId: "pov-pc-build-gpu",
-    start: 64,
+    start: 88,
     end: 114,
+    previewAt: 100,
     scene: "The XFX graphics card is aligned with the PCIe x16 slot and rear bracket, then seated evenly.",
     note: "Trace → seat into the PCIe slot",
     label: "Press level into the slot",
     mode: "translate",
     outline:
-      "M 294 424 Q 309 408 334 406 L 938 410 Q 968 414 981 435 L 978 536 Q 966 559 939 565 L 337 558 Q 307 553 296 532 Z",
-    delta: [0, -48],
-    motionPath: "M 638 512 C 638 486 638 455 638 423",
+      "M 346 374 Q 364 365 389 368 L 934 376 Q 954 379 962 392 L 958 444 Q 949 457 929 461 L 380 462 Q 356 458 348 445 Z",
+    delta: [0, -36],
+    motionPath: "M 652 438 C 652 420 652 399 652 379",
     detailPaths: [
-      "M 418 435 A 50 50 0 1 0 418 535 A 50 50 0 1 0 418 435",
-      "M 635 435 A 50 50 0 1 0 635 535 A 50 50 0 1 0 635 435",
-      "M 852 435 A 50 50 0 1 0 852 535 A 50 50 0 1 0 852 435",
+      "M 375 397 L 925 402",
+      "M 374 431 L 927 435",
+      "M 404 383 L 404 448 M 890 390 L 890 451",
     ],
-    labelAt: [684, 348],
+    labelAt: [710, 330],
     keywords: ["gpu", "graphics", "card", "pcie", "seat", "install", "slot"],
   },
   {
@@ -182,16 +192,17 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     videoId: "pov-tuna-melt",
     start: 15,
     end: 43,
+    previewAt: 24,
     scene: "Celery is being cut into small pieces on the wooden board for the tuna mixture.",
     note: "Trace → slice with a short rock",
     label: "Rock the blade—fingers back",
     mode: "slice",
     outline:
-      "M 581 437 L 610 430 L 707 616 L 700 648 L 680 650 L 665 620 Z",
-    delta: [-28, -72],
-    motionPath: "M 681 603 C 667 566 649 526 629 486",
+      "M 650 360 L 668 352 L 755 515 L 752 548 L 731 552 L 716 522 Z",
+    delta: [-24, -62],
+    motionPath: "M 736 518 C 721 477 702 435 677 392",
     detailPaths: ["M 492 286 L 694 286", "M 512 342 L 656 342"],
-    labelAt: [728, 478],
+    labelAt: [806, 446],
     keywords: ["cut", "slice", "chop", "knife", "celery"],
   },
   {
@@ -199,6 +210,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     videoId: "pov-tuna-melt",
     start: 68,
     end: 99,
+    previewAt: 88,
     scene: "The assembled tuna sandwich is lowered into the skillet and positioned flat for frying.",
     note: "Trace → lower flat into the pan",
     label: "Set it flat in the skillet",
@@ -210,6 +222,42 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     detailPaths: ["M 665 260 Q 710 243 762 258", "M 660 302 Q 710 319 773 304"],
     labelAt: [806, 320],
     keywords: ["sandwich", "pan", "skillet", "lower", "place", "fry"],
+  },
+  {
+    id: "tesla-release-connector",
+    videoId: "tesla",
+    start: 215,
+    end: 240,
+    previewAt: 225,
+    scene: "A locked electrical connector is exposed beside the rear hub/suspension assembly.",
+    note: "Trace → release lock, pull straight",
+    label: "Release the red lock first",
+    mode: "translate",
+    outline:
+      "M 558 318 L 666 307 L 716 340 L 782 344 L 835 376 L 829 466 L 782 492 L 713 474 L 670 449 L 590 452 L 551 414 Z M 611 334 L 676 330 L 702 352 L 662 377 L 604 371 Z",
+    delta: [88, 4],
+    motionPath: "M 708 401 C 758 401 811 403 870 405",
+    detailPaths: ["M 630 320 L 695 320 L 708 348 L 646 365 Z"],
+    labelAt: [860, 350],
+    keywords: ["connector", "plug", "unplug", "disconnect", "harness", "tesla"],
+  },
+  {
+    id: "ikea-seat-side-rail",
+    videoId: "ikea",
+    start: 15,
+    end: 29,
+    previewAt: 20,
+    scene: "A white MICKE desk side rail is aligned with the upright frame beside the desktop panel.",
+    note: "Trace → seat the rail square",
+    label: "Seat the rail flush",
+    mode: "translate",
+    outline:
+      "M 86 344 L 641 218 Q 660 215 679 232 L 667 260 L 112 379 Q 92 374 79 361 Z",
+    delta: [42, -16],
+    motionPath: "M 604 253 C 632 244 660 234 691 222",
+    detailPaths: ["M 329 302 A 7 7 0 1 0 329 316 A 7 7 0 1 0 329 302"],
+    labelAt: [690, 280],
+    keywords: ["rail", "frame", "desk", "ikea", "align", "attach", "insert"],
   },
 ];
 
@@ -238,4 +286,3 @@ export function findCatalogChoreography(
     .map((cue) => ({ cue, score: keywordScore(cue, message) }))
     .sort((a, b) => b.score - a.score)[0].cue;
 }
-

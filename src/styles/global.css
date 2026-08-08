@@ -1428,7 +1428,7 @@ video {
   z-index: 4;
   overflow: visible;
   pointer-events: none;
-  animation: catalog-motion-in 0.24s cubic-bezier(0.18, 0.9, 0.24, 1) both;
+  animation: catalog-motion-in 0.16s cubic-bezier(0.18, 0.9, 0.24, 1) both;
 }
 
 .catalog-motion-svg {
@@ -1457,7 +1457,7 @@ video {
   filter: blur(7px);
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
-  animation: catalog-outline-trace 0.29s cubic-bezier(0.15, 0.8, 0.2, 1) forwards;
+  animation: catalog-outline-trace 0.18s cubic-bezier(0.15, 0.8, 0.2, 1) forwards;
 }
 
 .catalog-motion-object {
@@ -1467,7 +1467,7 @@ video {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   filter: drop-shadow(0 0 7px rgba(105, 244, 255, 0.85));
-  animation: catalog-outline-trace 0.29s cubic-bezier(0.15, 0.8, 0.2, 1) forwards;
+  animation: catalog-outline-trace 0.18s cubic-bezier(0.15, 0.8, 0.2, 1) forwards;
 }
 
 .catalog-motion-detail {
@@ -1476,7 +1476,7 @@ video {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   filter: drop-shadow(0 0 5px rgba(157, 255, 176, 0.5));
-  animation: catalog-outline-trace 0.24s cubic-bezier(0.15, 0.8, 0.2, 1) forwards;
+  animation: catalog-outline-trace 0.16s cubic-bezier(0.15, 0.8, 0.2, 1) forwards;
 }
 
 .catalog-motion-target {
@@ -1486,7 +1486,7 @@ video {
   stroke-dasharray: 8 9;
   opacity: 0;
   filter: drop-shadow(0 0 5px rgba(105, 244, 255, 0.36));
-  animation: catalog-target-breathe 1.65s 0.28s ease-in-out infinite;
+  animation: catalog-target-breathe 1.35s 0.16s ease-in-out infinite;
 }
 
 .catalog-motion-rail-glow {
@@ -1494,7 +1494,7 @@ video {
   stroke-width: 17;
   opacity: 0;
   filter: blur(7px);
-  animation: catalog-rail-appear 0.16s 0.24s ease-out forwards;
+  animation: catalog-rail-appear 0.14s 0.13s ease-out forwards;
 }
 
 .catalog-motion-rail {
@@ -1503,8 +1503,8 @@ video {
   stroke-dashoffset: 42;
   opacity: 0;
   animation:
-    catalog-rail-appear 0.14s 0.24s ease-out forwards,
-    catalog-rail-flow 0.38s 0.3s linear infinite;
+    catalog-rail-appear 0.13s 0.13s ease-out forwards,
+    catalog-rail-flow 0.34s 0.17s linear infinite;
 }
 
 .catalog-motion-arrowhead {
@@ -1518,7 +1518,7 @@ video {
   stroke-width: 1.5;
   opacity: 0;
   filter: drop-shadow(0 0 8px rgba(105, 244, 255, 1));
-  animation: catalog-spark-in 0.12s 0.32s ease-out forwards;
+  animation: catalog-spark-in 0.1s 0.2s ease-out forwards;
 }
 
 .catalog-motion-spark.spark-2 {
@@ -1553,7 +1553,7 @@ video {
   backdrop-filter: blur(14px) saturate(1.15);
   -webkit-backdrop-filter: blur(14px) saturate(1.15);
   transform: translate(-8%, -50%);
-  animation: catalog-label-in 0.25s 0.18s cubic-bezier(0.18, 0.9, 0.24, 1) both;
+  animation: catalog-label-in 0.18s 0.1s cubic-bezier(0.18, 0.9, 0.24, 1) both;
 }
 
 .catalog-motion-label-kicker {
@@ -1595,11 +1595,11 @@ video {
 
 @keyframes catalog-target-breathe {
   0%,
-  16% {
+  5% {
     opacity: 0;
   }
-  48%,
-  82% {
+  42%,
+  78% {
     opacity: 0.92;
   }
   100% {
@@ -1665,6 +1665,10 @@ video {
   pointer-events: none;
   transform: translateX(-50%);
   animation: guidance-status-in 0.36s cubic-bezier(0.18, 0.9, 0.24, 1) both;
+}
+
+.guidance-status-chip.is-leaving {
+  animation: fade-out 0.28s ease both;
 }
 
 .guidance-status-mark {
@@ -1851,7 +1855,15 @@ video {
   .guidance-motion-flow,
   .guidance-pivot-wave,
   .guidance-motion-ghost circle,
-  .guidance-motion-particle {
+  .guidance-motion-particle,
+  .catalog-motion-object,
+  .catalog-motion-object-aura,
+  .catalog-motion-detail,
+  .catalog-motion-target,
+  .catalog-motion-rail,
+  .catalog-motion-rail-glow,
+  .catalog-motion-spark,
+  .catalog-motion-label-kicker i {
     animation: none;
   }
 }

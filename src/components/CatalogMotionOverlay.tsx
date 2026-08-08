@@ -6,7 +6,9 @@ type Props = {
   height: number;
 };
 
-const LOOP_SECONDS = 1.65;
+const LOOP_SECONDS = 1.35;
+const MOTION_START_SECONDS = 0.18;
+const MOTION_KEY_TIMES = "0;0.03;0.42;0.78;1";
 
 function destinationTransform(cue: CatalogMotionCue): string | undefined {
   if (cue.delta) return `translate(${cue.delta[0]} ${cue.delta[1]})`;
@@ -33,11 +35,11 @@ export default function CatalogMotionOverlay({ cue, width, height }: Props) {
         {cue.mode === "morph" && cue.destination && (
           <animate
             attributeName="d"
-            begin=".3s"
+            begin={`${MOTION_START_SECONDS}s`}
             dur={`${LOOP_SECONDS}s`}
             repeatCount="indefinite"
             values={`${cue.outline};${cue.outline};${cue.destination};${cue.destination};${cue.outline}`}
-            keyTimes="0;0.12;0.48;0.82;1"
+            keyTimes={MOTION_KEY_TIMES}
           />
         )}
       </path>
@@ -49,11 +51,11 @@ export default function CatalogMotionOverlay({ cue, width, height }: Props) {
         {cue.mode === "morph" && cue.destination && (
           <animate
             attributeName="d"
-            begin=".3s"
+            begin={`${MOTION_START_SECONDS}s`}
             dur={`${LOOP_SECONDS}s`}
             repeatCount="indefinite"
             values={`${cue.outline};${cue.outline};${cue.destination};${cue.destination};${cue.outline}`}
-            keyTimes="0;0.12;0.48;0.82;1"
+            keyTimes={MOTION_KEY_TIMES}
           />
         )}
       </path>
@@ -118,22 +120,22 @@ export default function CatalogMotionOverlay({ cue, width, height }: Props) {
               <animateTransform
                 attributeName="transform"
                 type="translate"
-                begin=".3s"
+                begin={`${MOTION_START_SECONDS}s`}
                 dur={`${LOOP_SECONDS}s`}
                 repeatCount="indefinite"
                 values={`0 0;0 0;${cue.delta[0]} ${cue.delta[1]};${cue.delta[0]} ${cue.delta[1]};0 0`}
-                keyTimes="0;0.12;0.48;0.82;1"
+                keyTimes={MOTION_KEY_TIMES}
               />
             )}
             {cue.rotation && (
               <animateTransform
                 attributeName="transform"
                 type="rotate"
-                begin=".3s"
+                begin={`${MOTION_START_SECONDS}s`}
                 dur={`${LOOP_SECONDS}s`}
                 repeatCount="indefinite"
                 values={`0 ${cue.rotation.cx} ${cue.rotation.cy};0 ${cue.rotation.cx} ${cue.rotation.cy};${cue.rotation.degrees} ${cue.rotation.cx} ${cue.rotation.cy};${cue.rotation.degrees} ${cue.rotation.cx} ${cue.rotation.cy};0 ${cue.rotation.cx} ${cue.rotation.cy}`}
-                keyTimes="0;0.12;0.48;0.82;1"
+                keyTimes={MOTION_KEY_TIMES}
               />
             )}
             {animatedObject}
@@ -155,18 +157,14 @@ export default function CatalogMotionOverlay({ cue, width, height }: Props) {
             r={index === 0 ? 5 : 3.5}
           >
             <animateMotion
-              begin={`${0.34 + index * 0.16}s`}
-              dur=".72s"
+              begin={`${0.2 + index * 0.12}s`}
+              dur=".56s"
               repeatCount="indefinite"
               path={cue.motionPath}
             />
           </circle>
         ))}
 
-        <g className="catalog-motion-lock">
-          <circle cx="24" cy="24" r="17" />
-          <path d="M15 25 L21 31 L34 17" />
-        </g>
       </svg>
 
       <div
@@ -184,4 +182,3 @@ export default function CatalogMotionOverlay({ cue, width, height }: Props) {
     </div>
   );
 }
-

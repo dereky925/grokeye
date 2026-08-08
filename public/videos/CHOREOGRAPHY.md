@@ -15,10 +15,14 @@ and intent meaning synchronized when either file changes.
 ## Rendering contract
 
 1. Match the selected `video.id` and current playhead time.
-2. Trace the tight authored subject silhouette in about **290 ms**.
-3. Move or morph that same outline through the physical gesture in a **1.65 s** loop.
-4. Keep the spoken `/api/chat` request live and independent.
-5. If no authored window matches, use the conservative frame-grounded `/api/guide`
+2. Trace the tight authored subject silhouette immediately, resolving it in about **0.2 s**.
+3. Then move or morph that same outline through the gesture in a **1.35 s** loop.
+4. Keep the spoken `/api/chat` request live; pass the authored cue as UI context so the
+   visible reply and Carina voice explicitly tell the worker to follow the animation.
+5. When the voice response returns to `idle`, begin the same **280 ms** exit fade as the
+   `VoiceBubble`, then unmount the authored animation with it. Normal tracked callouts
+   retain their longer voice-synced holds.
+6. If no authored window matches, use the conservative frame-grounded `/api/guide`
    fallback. Never stretch a cue into another scene.
 
 All runtime coordinates use a 1280 × 720 authoring plane. The overlay is scaled into
@@ -88,7 +92,8 @@ Good live phrasings: “How do I seat this CPU?” and “Which way do I press t
 | 0:00–0:28 | The XFX graphics card is unboxed and inspected. | Full card/fan side is visible over foam. | Live fallback only. |
 | 0:28–0:36 | The graphics card is brought near the white case and the install location is established. | Card, open case, motherboard. | Live fallback only. |
 | 0:36–1:04 | Rear PCIe slot covers are loosened and removed. | Two narrow rear covers beside the motherboard slots. | `gpu-remove-slot-cover`: trace covers → lift them out. |
-| 1:04–1:54 | The GPU rear bracket and PCIe edge are aligned, then the card is pressed level into the x16 slot. | Large triple-fan card silhouette crossing the lower case opening. | `gpu-seat-card`: trace the actual card silhouette/fans → move level into the slot. |
+| 1:04–1:28 | The GPU is oriented near the rear bracket; the viewpoint and card face change too quickly for a fixed silhouette. | Card, rear bracket, and motherboard remain live-grounded. | Live fallback only. |
+| 1:28–1:54 | The GPU rear bracket and PCIe edge are aligned, then the card is pressed level into the x16 slot. | Long edge-on card silhouette crossing the lower case opening. | `gpu-seat-card`: trace the actual card edge → move level into the slot. |
 | 1:54–2:05 | The installed area and power-cable side are inspected. | Card is largely seated; cable visibility changes. | Cue ends; live fallback for power questions. |
 
 Good live phrasings: “How do I put this GPU in?”, “Which slot does it go into?”, and
@@ -109,11 +114,38 @@ Good live phrasings: “How do I put this GPU in?”, “Which slot does it go i
 Good live phrasings: “How do I chop this?”, “Show me the knife motion,” and “How do I
 put this into the pan?”
 
+## `tesla` — 0:00–6:34
+
+This is safety-critical vehicle work. The scene memory describes what is visible but
+does not infer high-voltage isolation, vehicle support, torque, or readiness to remove
+the drive unit.
+
+| Time | What is actually happening | Visible anchors / caution | Authored cue |
+| --- | --- | --- | --- |
+| 0:00–0:25 | Rear of the car, removed drive unit, jack stands, and tools are established. | Heavy vehicle/drive-unit support state is not provable from one frame. | Live fallback; unsafe states may refuse motion. |
+| 0:25–1:15 | Work continues under the rear subframe around cables, brackets, and support points. | Viewpoint changes under the raised vehicle. | Live fallback only. |
+| 1:15–2:05 | Rear suspension links and hub-area fasteners are inspected/worked. | Suspension arms, hub, damper, and brake lines. | Live fallback; no authored torque motion. |
+| 2:05–3:35 | The camera moves between the rear bumper and close suspension/hub views. | Components are visible, but load and isolation are hidden. | Live fallback only. |
+| 3:35–4:00 | A red-locked electrical connector is clearly exposed near the rear hub assembly. | Connector body and red secondary lock are visible. | `tesla-release-connector`: trace connector → release lock/pull straight. Spoken guidance must still qualify isolation/safety. |
+| 4:00–6:34 | Additional suspension/underbody components are disconnected or inspected and the camera returns to wider under-car views. | Fasteners and heavy components; correctness depends on hidden support/torque state. | Live fallback only. |
+
+Good live phrasing in the authored window: “How do I unplug this connector?”
+
+## `ikea` — 0:00–1:00
+
+| Time | What is actually happening | Visible anchors / caution | Authored cue |
+| --- | --- | --- | --- |
+| 0:00–0:15 | White metal MICKE desk frame pieces are arranged around the desktop panel. | Rectangular outer frame and long rails are visible. | Live fallback only while pieces move rapidly. |
+| 0:15–0:29 | A long white side rail is aligned and seated against the upright frame. | Rail silhouette runs diagonally across the lower half of the POV frame. | `ikea-seat-side-rail`: trace rail → seat it square/flush. |
+| 0:29–0:40 | The frame is repositioned around the desktop panel. | Assembly orientation changes. | Live fallback only. |
+| 0:40–1:00 | Hardware/tools are selected and prepared for the next fastener steps. | Bit kit, small hardware, and instruction material. | Live fallback; the official hosted MICKE PDF remains the manual source. |
+
+Good live phrasing: “How do I attach this rail?”
+
 ## Maintenance checklist
 
 - Re-sample frames after any video re-edit; timestamps and silhouettes will drift.
 - Add a runtime cue only when the subject stays in roughly the authored place for the
-  short 1.65-second loop.
+  short 1.35-second loop.
 - Keep dangerous or hidden-state actions on the live conservative path.
 - Add every new catalog video here before claiming full catalog choreography coverage.
-

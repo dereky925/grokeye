@@ -23,6 +23,8 @@ type Props = {
   guidanceMotion?: GuidanceMotion | null;
   /** Instant authored silhouette choreography for a known catalog scene. */
   catalogMotion?: CatalogMotionCue | null;
+  /** Exit authored choreography in lockstep with the spoken-response bubble. */
+  catalogMotionLeaving?: boolean;
   guidanceStatus?: GuidanceStatus | null;
   onLabelsChange: (labels: HighlightLabel[]) => void;
   /**
@@ -70,6 +72,7 @@ export default function VideoHighlights({
   links = [],
   guidanceMotion = null,
   catalogMotion = null,
+  catalogMotionLeaving = false,
   guidanceStatus = null,
   onLabelsChange,
   holdUntil = null,
@@ -251,7 +254,7 @@ export default function VideoHighlights({
 
   return (
     <div
-      className={`video-highlights ${leaving ? "is-leaving" : ""}`}
+      className={`video-highlights ${leaving || catalogMotionLeaving ? "is-leaving" : ""}`}
       aria-hidden
     >
       <div

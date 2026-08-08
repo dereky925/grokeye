@@ -1,6 +1,6 @@
 import type { GuidanceCue } from "../types";
 
-type Props = { cue: GuidanceCue; authored?: boolean };
+type Props = { cue: GuidanceCue; authored?: boolean; leaving?: boolean };
 
 const COPY = {
   ready: "Motion locked",
@@ -9,10 +9,14 @@ const COPY = {
   unsafe_to_show: "Can't guide safely",
 } as const;
 
-export default function GuidanceStatusChip({ cue, authored = false }: Props) {
+export default function GuidanceStatusChip({
+  cue,
+  authored = false,
+  leaving = false,
+}: Props) {
   return (
     <div
-      className={`guidance-status-chip is-${cue.status}${authored ? " is-authored" : ""}`}
+      className={`guidance-status-chip is-${cue.status}${authored ? " is-authored" : ""}${leaving ? " is-leaving" : ""}`}
       role="status"
       aria-live="polite"
     >
