@@ -72,8 +72,8 @@ function toVideo(item, score) {
     item.videoId ||
     null;
   if (!id) return null;
-  const title = item.snippet?.title || item.title || "SpaceX video";
-  const description = item.snippet?.description || item.description || "";
+  const title = decodeXml(item.snippet?.title || item.title || "SpaceX video");
+  const description = decodeXml(item.snippet?.description || item.description || "");
   const publishedAt =
     item.snippet?.publishedAt || item.publishedAt || item.updated || null;
   const thumb =
@@ -187,7 +187,8 @@ function decodeXml(s) {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/gi, "'");
 }
 
 export async function findStarshipWebcast() {
