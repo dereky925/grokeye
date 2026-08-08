@@ -103,14 +103,20 @@ type TrackTarget = {
   th: number;
   score: number;
   misses: number;
+  /** Prefer orange/pink re-lock (salmon / fish labels). */
+  colorLock: boolean;
 };
 
-const TRACK_W = 360;
+const TRACK_W = 400;
 const TEMPL = 48;
-const SEARCH_PAD = 0.28;
-const MIN_SCORE = 0.34;
-const MAX_MISSES = 30;
+const SEARCH_PAD = 0.22;
+const SEARCH_PAD_LOST = 0.38;
+const MIN_SCORE = 0.32;
+const MAX_MISSES = 40;
 const HIST_BINS = 8; // 8^3 = 512 RGB bins
+const FLOW_PATCH = 5; // odd
+const FLOW_SEARCH = 14;
+const FLOW_GRID = 3;
 
 function luma(
   data: Uint8ClampedArray,
@@ -276,6 +282,7 @@ function fusedSearch(
   gw: number,
   gh: number,
   target: TrackTarget,
+  searchPad = SEARCH_PAD,
 ): { x: number; y: number; w: number; h: number; score: number } | null {
   const { box, grayT, edgeT, hist, tw, th } = target;
   const gStats = meanStd(grayT);
@@ -285,8 +292,8 @@ function fusedSearch(
   const bhPx = Math.max(th, box.h * gh);
   const cx = (box.x + box.w / 2) * gw;
   const cy = (box.y + box.h / 2) * gh;
-  const padX = SEARCH_PAD * gw;
-  const padY = SEARCH_PAD * gh;
+  const padX = searchPad * gw;
+  const padY = searchPad * gh;
 
   const x0 = Math.max(0, Math.floor(cx - bwPx / 2 - padX));
   const y0 = Math.max(0, Math.floor(cy - bhPx / 2 - padY));
@@ -348,6 +355,148 @@ function fusedSearch(
   };
 }
 
+/** Sparse block-match flow (LK-style) — median displacement of a patch grid. */
+function estimateBoxFlow(
+  prev: Float32Array,
+  curr: Float32Array,
+  gw: number,
+  gh: number,
+  box: { x: number; y: number; w: number; h: number },
+): { dx: number; dy: number } | null {
+  const half = (FLOW_PATCH - 1) >> 1;
+  const dxs: number[] = [];
+  const dys: number[] = [];
+
+  for (let gy = 0; gy < FLOW_GRID; gy++) {
+    for (let gx = 0; gx < FLOW_GRID; gx++) {
+      const cx = Math.round((box.x + box.w * ((gx + 1) / (FLOW_GRID + 1))) * gw);
+      const cy = Math.round((box.y + box.h * ((gy + 1) / (FLOW_GRID + 1))) * gh);
+      if (
+        cx - half - FLOW_SEARCH < 0 ||
+        cy - half - FLOW_SEARCH < 0 ||
+        cx + half + FLOW_SEARCH >= gw ||
+        cy + half + FLOW_SEARCH >= gh
+      ) {
+        continue;
+      }
+
+      let bestSad = Infinity;
+      let bestDx = 0;
+      let bestDy = 0;
+      for (let dy = -FLOW_SEARCH; dy <= FLOW_SEARCH; dy += 2) {
+        for (let dx = -FLOW_SEARCH; dx <= FLOW_SEARCH; dx += 2) {
+          let sad = 0;
+          for (let py = -half; py <= half; py++) {
+            const prow = (cy + py) * gw + cx;
+            const crow = (cy + dy + py) * gw + (cx + dx);
+            for (let px = -half; px <= half; px++) {
+              sad += Math.abs(prev[prow + px] - curr[crow + px]);
+            }
+          }
+          if (sad < bestSad) {
+            bestSad = sad;
+            bestDx = dx;
+            bestDy = dy;
+          }
+        }
+      }
+      // Refine ±1
+      for (let dy = bestDy - 1; dy <= bestDy + 1; dy++) {
+        for (let dx = bestDx - 1; dx <= bestDx + 1; dx++) {
+          if (
+            cx + dx - half < 0 ||
+            cy + dy - half < 0 ||
+            cx + dx + half >= gw ||
+            cy + dy + half >= gh
+          ) {
+            continue;
+          }
+          let sad = 0;
+          for (let py = -half; py <= half; py++) {
+            const prow = (cy + py) * gw + cx;
+            const crow = (cy + dy + py) * gw + (cx + dx);
+            for (let px = -half; px <= half; px++) {
+              sad += Math.abs(prev[prow + px] - curr[crow + px]);
+            }
+          }
+          if (sad < bestSad) {
+            bestSad = sad;
+            bestDx = dx;
+            bestDy = dy;
+          }
+        }
+      }
+      const maxSad = FLOW_PATCH * FLOW_PATCH * 40;
+      if (bestSad < maxSad) {
+        dxs.push(bestDx);
+        dys.push(bestDy);
+      }
+    }
+  }
+
+  if (dxs.length < 3) return null;
+  dxs.sort((a, b) => a - b);
+  dys.sort((a, b) => a - b);
+  const mid = dxs.length >> 1;
+  return { dx: dxs[mid], dy: dys[mid] };
+}
+
+function isSalmonHue(r: number, g: number, b: number) {
+  const rn = r / 255;
+  const gn = g / 255;
+  const bn = b / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const d = max - min;
+  let h = 0;
+  if (d > 1e-6) {
+    if (max === rn) h = ((gn - bn) / d) % 6;
+    else if (max === gn) h = (bn - rn) / d + 2;
+    else h = (rn - gn) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  const s = max <= 1e-6 ? 0 : d / max;
+  const v = max;
+  return (
+    ((h >= 3 && h <= 24) || h >= 352) &&
+    s >= 0.45 &&
+    s <= 0.98 &&
+    v >= 0.32 &&
+    v <= 0.92
+  );
+}
+
+/** Nudge box center toward the salmon-colored mass inside an expanded ROI. */
+function colorCentroidNudge(
+  rgba: Uint8ClampedArray,
+  gw: number,
+  gh: number,
+  box: { x: number; y: number; w: number; h: number },
+): { x: number; y: number } | null {
+  const pad = 0.35;
+  const x0 = Math.max(0, Math.floor((box.x - box.w * pad) * gw));
+  const y0 = Math.max(0, Math.floor((box.y - box.h * pad) * gh));
+  const x1 = Math.min(gw, Math.ceil((box.x + box.w * (1 + pad)) * gw));
+  const y1 = Math.min(gh, Math.ceil((box.y + box.h * (1 + pad)) * gh));
+  let sumX = 0;
+  let sumY = 0;
+  let n = 0;
+  const step = 2;
+  for (let y = y0; y < y1; y += step) {
+    for (let x = x0; x < x1; x += step) {
+      const o = (y * gw + x) * 4;
+      if (isSalmonHue(rgba[o], rgba[o + 1], rgba[o + 2])) {
+        sumX += x;
+        sumY += y;
+        n += 1;
+      }
+    }
+  }
+  if (n < 12) return null;
+  return { x: sumX / n / gw, y: sumY / n / gh };
+}
+
 function blendTemplate(dst: Float32Array, src: Float32Array, a: number) {
   const b = 1 - a;
   for (let i = 0; i < dst.length; i++) dst[i] = dst[i] * b + src[i] * a;
@@ -359,8 +508,8 @@ export type HighlightTracker = {
 };
 
 /**
- * Fused tracker: grayscale NCC + Sobel-edge NCC + RGB histogram.
- * Neighborhood search ~12fps. Holds while paused. No OpenCV.js bundle.
+ * Fused tracker: sparse optical-flow seed + grayscale/edge NCC + RGB hist,
+ * with optional salmon color re-lock. ~18fps neighborhood search.
  */
 export function createHighlightTracker(
   video: HTMLVideoElement,
@@ -392,10 +541,12 @@ export function createHighlightTracker(
     th: TEMPL,
     score: 1,
     misses: 0,
+    colorLock: /\b(salmon|fish|sashimi)\b/i.test(l.text),
   }));
 
+  let prevGray: Float32Array | null = gray0;
   let lastTs = 0;
-  const minDt = 1000 / 12;
+  const minDt = 1000 / 18;
 
   return {
     update(el) {
@@ -420,7 +571,36 @@ export function createHighlightTracker(
 
       const alive: HighlightLabel[] = [];
       for (const t of targets) {
-        const hit = fusedSearch(gray, edges, frame.data, gw, gh, t);
+        // 1) Optical-flow seed — follow camera / hand motion between frames.
+        if (prevGray) {
+          const flow = estimateBoxFlow(prevGray, gray, gw, gh, t.box);
+          if (flow) {
+            t.box = {
+              ...t.box,
+              x: clamp01(t.box.x + flow.dx / gw),
+              y: clamp01(t.box.y + flow.dy / gh),
+            };
+            if (t.box.x + t.box.w > 1) t.box.x = Math.max(0, 1 - t.box.w);
+            if (t.box.y + t.box.h > 1) t.box.y = Math.max(0, 1 - t.box.h);
+          }
+        }
+
+        // 2) Salmon color centroid nudge before template match.
+        if (t.colorLock) {
+          const c = colorCentroidNudge(frame.data, gw, gh, t.box);
+          if (c) {
+            t.box = {
+              ...t.box,
+              x: clamp01(c.x - t.box.w / 2),
+              y: clamp01(c.y - t.box.h / 2),
+            };
+            if (t.box.x + t.box.w > 1) t.box.x = Math.max(0, 1 - t.box.w);
+            if (t.box.y + t.box.h > 1) t.box.y = Math.max(0, 1 - t.box.h);
+          }
+        }
+
+        const pad = t.misses > 6 ? SEARCH_PAD_LOST : SEARCH_PAD;
+        const hit = fusedSearch(gray, edges, frame.data, gw, gh, t, pad);
         if (!hit) {
           t.misses += 1;
           if (t.misses < MAX_MISSES) {
@@ -431,14 +611,15 @@ export function createHighlightTracker(
 
         t.misses = Math.max(0, t.misses - 3);
         t.score = hit.score;
+        // Follow motion more aggressively than before.
         t.box = {
-          x: t.box.x * 0.55 + hit.x * 0.45,
-          y: t.box.y * 0.55 + hit.y * 0.45,
-          w: t.box.w * 0.8 + hit.w * 0.2,
-          h: t.box.h * 0.8 + hit.h * 0.2,
+          x: t.box.x * 0.3 + hit.x * 0.7,
+          y: t.box.y * 0.3 + hit.y * 0.7,
+          w: t.box.w * 0.75 + hit.w * 0.25,
+          h: t.box.h * 0.75 + hit.h * 0.25,
         };
 
-        if (hit.score > 0.5) {
+        if (hit.score > 0.42) {
           const gPatch = extractFieldPatch(
             gray,
             gw,
@@ -470,18 +651,22 @@ export function createHighlightTracker(
             t.box.w,
             t.box.h,
           );
-          blendTemplate(t.grayT, gPatch, 0.08);
-          blendTemplate(t.edgeT, ePatch, 0.08);
-          blendTemplate(t.hist, hPatch, 0.06);
+          // Stronger refresh so templates keep up with deformation / lighting.
+          blendTemplate(t.grayT, gPatch, 0.2);
+          blendTemplate(t.edgeT, ePatch, 0.18);
+          blendTemplate(t.hist, hPatch, 0.14);
         }
 
         alive.push({ id: t.id, text: t.text, ...t.box });
       }
+
+      prevGray = gray;
       return alive.length ? alive : null;
     },
     dispose() {
       canvas.width = 0;
       canvas.height = 0;
+      prevGray = null;
     },
   };
 }
