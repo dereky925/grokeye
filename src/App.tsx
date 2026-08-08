@@ -17,6 +17,17 @@ const LIVE_CAMERA: VideoItem = {
   live: true,
 };
 
+const FLIP_COACH: VideoItem = {
+  id: "flip",
+  title: "Bottle Flip Coach",
+  description: "Flip a bottle, then ask how you did. Grok replays the frames and explains the physics.",
+  src: "",
+  thumbnail: "",
+  durationSeconds: 0,
+  live: true,
+  mode: "flip",
+};
+
 export default function App() {
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +70,7 @@ export default function App() {
         <VideoPlayer video={active} onBack={() => setActive(null)} />
       ) : (
         <Dashboard
-          videos={[LIVE_CAMERA, ...videos]}
+          videos={[LIVE_CAMERA, FLIP_COACH, ...videos]}
           loading={loading}
           error={error}
           onSelect={setActive}

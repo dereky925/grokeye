@@ -34,14 +34,20 @@ export default function Dashboard({
             <button
               key={video.id}
               type="button"
-              className={`video-card ${video.live ? "live" : ""}`}
+              className={`video-card ${video.live ? "live" : ""} ${video.mode === "flip" ? "coach" : ""}`}
               style={{ animationDelay: `${index * 60}ms` }}
               onClick={() => onSelect(video)}
             >
               <div className="video-thumb">
                 {video.live ? (
                   <div className="live-thumb" aria-hidden>
-                    <span className="live-thumb-icon" />
+                    <span
+                      className={
+                        video.mode === "flip"
+                          ? "flip-thumb-icon"
+                          : "live-thumb-icon"
+                      }
+                    />
                   </div>
                 ) : (
                   <img src={video.thumbnail} alt="" />

@@ -964,6 +964,129 @@ app.post("/api/ghost", async (req, res) => {
   }
 });
 
+function normalizeFlipReview(parsed) {
+  const factors = (Array.isArray(parsed?.factors) ? parsed.factors : [])
+    .map((f) => ({
+      label: String(f?.label || "").trim().slice(0, 40),
+      detail: String(f?.detail || "").trim().slice(0, 180),
+    }))
+    .filter((f) => f.label && f.detail)
+    .slice(0, 4);
+
+  const fixes = (Array.isArray(parsed?.fixes) ? parsed.fixes : [])
+    .map((f) => String(f || "").trim().slice(0, 160))
+    .filter(Boolean)
+    .slice(0, 3);
+
+  // Anything other than a real boolean means the frames didn't show a landing.
+  const landed =
+    parsed?.landed === true ? true : parsed?.landed === false ? false : null;
+
+  const outcome =
+    String(parsed?.outcome || "").trim().slice(0, 90) ||
+    (landed === true ? "Landed upright" : "Could not tell from the frames");
+
+  return {
+    landed,
+    outcome,
+    factors,
+    fixes,
+    spoken:
+      String(parsed?.spoken || "").trim().slice(0, 320) ||
+      `${outcome}. ${fixes[0] || ""}`.trim(),
+  };
+}
+
+/**
+ * Physics review of a bottle flip. Takes a short burst of frames spanning the
+ * attempt and explains what the rotation, release, and water did.
+ */
+app.post("/api/flip", async (req, res) => {
+  try {
+    const question = String(req.body?.question || "how did I do").trim();
+    const frames = Array.isArray(req.body?.frames)
+      ? req.body.frames.filter(
+          (f) => typeof f === "string" && f.startsWith("data:image"),
+        )
+      : [];
+
+    if (frames.length < 2) {
+      return res
+        .status(400)
+        .json({ error: "at least 2 frames of the attempt are required" });
+    }
+
+    // No cache or in-flight dedupe: every attempt is a different set of frames,
+    // so a shared answer would replay a stale verdict for the next throw.
+    const system = [
+      "You are a physics coach reviewing a bottle flip from a burst of frames taken in order, oldest first.",
+      "Read the frames as a sequence: track the bottle's rotation, its height, where it was released, and how the water inside shifted.",
+      "Judge the outcome from the LAST frames. landed is true only if the bottle finished upright and stable on its base.",
+      "If the frames do not show where it ended up, set landed to null rather than guessing.",
+      "Explain the outcome with real mechanics: angular momentum from the wrist flick, rotation completed versus the ~360 degrees needed, release height and angle, and how the water slug shifting to the bottom damps rotation on contact.",
+      "Each factor must cite what the frames actually show, not generic advice.",
+      "fixes are concrete adjustments the user can feel on the next throw, most important first.",
+      "Return ONLY valid JSON (no markdown) matching:",
+      '{"landed":false,"outcome":"short headline","factors":[{"label":"Rotation","detail":"what the frames show"}],"fixes":["do this next time"],"spoken":"one or two sentences to say aloud"}',
+      "outcome is under 12 words. Give 2-4 factors and 1-3 fixes.",
+      "spoken is friendly and direct, under 45 words, and leads with the verdict.",
+    ].join(" ");
+
+    const job = (async () => {
+      const startedAt = Date.now();
+      const response = await fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "grok-4.5",
+          temperature: 0.2,
+          messages: [
+            { role: "system", content: system },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Viewer question: ${question}\n${frames.length} frames of one attempt follow, in chronological order. Frame 1 is the earliest.`,
+                },
+                ...frames.map((url) => ({
+                  type: "image_url",
+                  image_url: { url, detail: "high" },
+                })),
+              ],
+            },
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.error("Flip error:", data);
+        throw new Error(data?.error?.message || "Flip analysis failed");
+      }
+
+      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+      const review = normalizeFlipReview(parseManualJson(raw));
+      console.log(
+        `[flip] landed=${review.landed} "${review.outcome}" ${frames.length} frames in ${
+          Date.now() - startedAt
+        }ms`,
+      );
+      return review;
+    })();
+
+    res.json({ review: await job });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Flip analysis failed",
+    });
+  }
+});
+
 /**
  * Image proxy — fetch remote tool images server-side with a descriptive
  * User-Agent so hosts like Wikimedia (which 403 anonymous hotlinks) serve them,

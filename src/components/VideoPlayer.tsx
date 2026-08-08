@@ -16,6 +16,7 @@ import {
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
 import { useCameraStream } from "../hooks/useCameraStream";
+import { useFrameBuffer } from "../hooks/useFrameBuffer";
 import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
 import { useTwitterFeed } from "../hooks/useTwitterFeed";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
@@ -36,11 +37,14 @@ import {
 import { snapCommand } from "../lib/commands";
 import { cropSprite, fetchGhost, wantsGhost } from "../lib/ghost";
 import GhostOverlay from "./GhostOverlay";
+import FlipReview from "./FlipReview";
+import { fetchFlipReview, selectAttemptFrames, wantsFlipReview } from "../lib/flip";
 import { fetchTools, listPhrase, wantsTools } from "../lib/tools";
 import { parseSpotifyAction } from "../lib/spotify";
 import { parseTwitterAction } from "../lib/twitter";
 import { parseYoutubeAction } from "../lib/youtube";
 import type {
+  FlipReviewState,
   GhostState,
   HighlightLabel,
   ManualOverlayState,
@@ -117,11 +121,20 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const twitterOpenRef = useRef(false);
   const [cameraId, setCameraId] = useState<string | undefined>(undefined);
   const live = Boolean(video.live);
+  const flipMode = video.mode === "flip";
   const camera = useCameraStream({
     enabled: live,
     videoRef,
     deviceId: cameraId,
   });
+  // A flip is over in under a second, so the frames have to already be in hand
+  // by the time the user asks about it.
+  const { read: readFlipFrames } = useFrameBuffer({
+    enabled: live && flipMode,
+    videoRef,
+  });
+  const [flipReview, setFlipReview] = useState<FlipReviewState | null>(null);
+  const flipReviewRef = useRef<FlipReviewState | null>(null);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const youtubeOpenRef = useRef(false);
   const [youtubeSeek, setYoutubeSeek] = useState<{
@@ -150,6 +163,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     toolsRef.current = tools;
   }, [tools]);
+
+  useEffect(() => {
+    flipReviewRef.current = flipReview;
+  }, [flipReview]);
 
   const [micArmed, setMicArmed] = useState(true);
   const [listenActivity, setListenActivity] = useState(0);
@@ -427,6 +444,55 @@ export default function VideoPlayer({ video, onBack }: Props) {
           void spotify.pause().catch(() => {});
           setSpotifyOpen(false);
           spotifyOpenRef.current = false;
+          return;
+        }
+
+        // Flip coach owns "how did I do" while it is the active mode. The
+        // attempt is already over, so this reads back through the frame buffer
+        // instead of capturing now.
+        if (flipMode && wantsFlipReview(heard)) {
+          const picked = selectAttemptFrames(readFlipFrames());
+          if (picked.length < 2) {
+            setReply("I need to see a flip first — try one and ask again.");
+            setPhase("idle");
+            return;
+          }
+
+          const strip = picked.map((f) => f.url);
+          const loadingState: FlipReviewState = {
+            review: null,
+            strip,
+            loading: true,
+            x: flipReviewRef.current?.x ?? 24,
+            y: flipReviewRef.current?.y ?? 96,
+          };
+          setFlipReview(loadingState);
+          flipReviewRef.current = loadingState;
+          setUsedVision(true);
+
+          const review = await fetchFlipReview({ question: heard, frames: strip });
+          if (sessionId !== sessionRef.current) return;
+
+          const done: FlipReviewState = {
+            ...loadingState,
+            review,
+            loading: false,
+          };
+          setFlipReview(done);
+          flipReviewRef.current = done;
+
+          if (review.spoken) {
+            setReply(review.spoken);
+            lastSpokenRef.current = review.spoken;
+            setMicArmed(false);
+            setPhase("speaking");
+            try {
+              const url = await speakText(review.spoken);
+              await playAudioUrl(url, sessionId);
+            } catch {
+              /* the panel already has the verdict */
+            }
+          }
           return;
         }
 
@@ -778,7 +844,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
     [
       armMicSoon,
       clearGhost,
+      flipMode,
+      live,
       playAudioUrl,
+      readFlipFrames,
       spotify,
       twitter,
       youtube,
@@ -1101,6 +1170,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
           onClose={() => {
             setTools(null);
             toolsRef.current = null;
+          }}
+        />
+      )}
+
+      {flipReview && (
+        <FlipReview
+          state={flipReview}
+          onChangePosition={(x, y) => {
+            setFlipReview((f) => {
+              if (!f) return f;
+              const next = { ...f, x, y };
+              flipReviewRef.current = next;
+              return next;
+            });
+          }}
+          onClose={() => {
+            setFlipReview(null);
+            flipReviewRef.current = null;
           }}
         />
       )}
