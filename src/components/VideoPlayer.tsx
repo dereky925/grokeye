@@ -11,8 +11,11 @@ import {
   captureFrame,
   needsVideoContext,
   useGrokListener,
+  useWakeWord,
+  WAKE_RE,
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
+import { useCameraStream } from "../hooks/useCameraStream";
 import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
 import { useTwitterFeed } from "../hooks/useTwitterFeed";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
@@ -30,11 +33,14 @@ import {
   speakText,
 } from "../lib/manual";
 import { snapCommand } from "../lib/commands";
+import { cropSprite, fetchGhost, wantsGhost } from "../lib/ghost";
+import GhostOverlay from "./GhostOverlay";
 import { fetchTools, listPhrase, wantsTools } from "../lib/tools";
 import { parseSpotifyAction } from "../lib/spotify";
 import { parseTwitterAction } from "../lib/twitter";
 import { parseYoutubeAction } from "../lib/youtube";
 import type {
+  GhostState,
   HighlightLabel,
   ManualOverlayState,
   ToolsState,
@@ -91,6 +97,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const manualRef = useRef<ManualOverlayState | null>(null);
   const toolsRef = useRef<ToolsState | null>(null);
   const resumeAfterHighlightRef = useRef(false);
+  const resumeAfterGhostRef = useRef(false);
+  const ghostRef = useRef<GhostState | null>(null);
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
   const [reply, setReply] = useState("");
@@ -100,11 +108,19 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [manual, setManual] = useState<ManualOverlayState | null>(null);
   const [tools, setTools] = useState<ToolsState | null>(null);
   const [highlights, setHighlights] = useState<HighlightLabel[]>([]);
+  const [ghost, setGhost] = useState<GhostState | null>(null);
   const [detecting, setDetecting] = useState(false);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
   const spotifyOpenRef = useRef(false);
   const [twitterOpen, setTwitterOpen] = useState(false);
   const twitterOpenRef = useRef(false);
+  const [cameraId, setCameraId] = useState<string | undefined>(undefined);
+  const live = Boolean(video.live);
+  const camera = useCameraStream({
+    enabled: live,
+    videoRef,
+    deviceId: cameraId,
+  });
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const youtubeOpenRef = useRef(false);
   const [youtubeSeek, setYoutubeSeek] = useState<{
@@ -165,6 +181,16 @@ export default function VideoPlayer({ video, onBack }: Props) {
     }
   }, []);
 
+  const clearGhost = useCallback(() => {
+    setGhost(null);
+    ghostRef.current = null;
+    if (resumeAfterGhostRef.current) {
+      resumeAfterGhostRef.current = false;
+      const el = videoRef.current;
+      if (el) void el.play().catch(() => {});
+    }
+  }, []);
+
   const stopTts = useCallback(() => {
     const audio = audioRef.current as
       | (HTMLAudioElement & { __resolveSpeak?: () => void })
@@ -183,6 +209,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const interruptGrok = useCallback(() => {
     sessionRef.current += 1;
     stopTts();
+    clearGhost();
     setDetecting(false);
     setError(null);
     setReply("");
@@ -191,7 +218,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     setPhase("idle");
     if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
     armMicSoon(350);
-  }, [armMicSoon, stopTts]);
+  }, [armMicSoon, clearGhost, stopTts]);
 
   const canInterrupt =
     detecting ||
@@ -241,6 +268,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setReply("");
       setUsedVision(false);
       setPhase("thinking");
+      // A new turn supersedes whatever demo is on screen.
+      if (ghostRef.current) clearGhost();
 
       try {
         const youtubeAction = parseYoutubeAction(heard, youtubeOpenRef.current);
@@ -397,6 +426,67 @@ export default function VideoPlayer({ video, onBack }: Props) {
           void spotify.pause().catch(() => {});
           setSpotifyOpen(false);
           spotifyOpenRef.current = false;
+          return;
+        }
+
+        // Ahead of the manual router on purpose: "how do I use this jack?"
+        // matches the open-manual regex, but the user wants a demo, not a guide.
+        if (wantsGhost(heard) && el) {
+          el.pause();
+          resumeAfterGhostRef.current = true;
+          const frame = captureFrame(el, { maxW: 1024, quality: 0.8 });
+          if (!frame) throw new Error("Could not capture the frame");
+
+          setUsedVision(true);
+          setGhost({
+            label: "",
+            caption: "",
+            box: { x: 0.4, y: 0.4, w: 0.2, h: 0.2 },
+            motion: { primitive: "slide", to: { x: 0.6, y: 0.4 }, rotateDeg: 0 },
+            spriteUrl: "",
+            loading: true,
+          });
+
+          const m = manualRef.current;
+          let planned;
+          try {
+            planned = await fetchGhost({
+              question: heard,
+              frame,
+              videoTitle: video.title,
+              stepText: m ? m.doc.steps[m.stepIndex]?.text : undefined,
+            });
+          } catch (err) {
+            clearGhost();
+            throw err;
+          }
+          if (sessionId !== sessionRef.current) return;
+
+          // No usable box still gets a demo: trail plus caption, no sprite.
+          const box = planned.box ?? { x: 0.36, y: 0.4, w: 0.28, h: 0.2 };
+          const next: GhostState = {
+            label: planned.label,
+            caption: planned.caption,
+            box,
+            motion: planned.motion,
+            spriteUrl: planned.box ? cropSprite(el, box) : "",
+            loading: false,
+          };
+          setGhost(next);
+          ghostRef.current = next;
+
+          if (planned.caption) {
+            setReply(planned.caption);
+            lastSpokenRef.current = planned.caption;
+            setMicArmed(false);
+            setPhase("speaking");
+            try {
+              const url = await speakText(planned.caption);
+              await playAudioUrl(url, sessionId);
+            } catch {
+              /* the animation is the point — audio is a bonus */
+            }
+          }
           return;
         }
 
@@ -674,6 +764,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     },
     [
       armMicSoon,
+      clearGhost,
       playAudioUrl,
       spotify,
       twitter,
@@ -684,9 +775,25 @@ export default function VideoPlayer({ video, onBack }: Props) {
     ],
   );
 
+  // Mute the main recognizer while Grok is talking — browser STT will hear the
+  // speakers otherwise.
+  const listenerEnabled = micArmed && (phase === "idle" || phase === "listening");
+
+  // Barge-in: while Grok is thinking or talking, a wake-word-only recognizer
+  // takes over so "Hey Grok" can cut the answer short. Only one recognition can
+  // be active at a time, hence the negated listenerEnabled.
+  useWakeWord({
+    enabled: !listenerEnabled && (phase === "thinking" || phase === "speaking"),
+    onWake: () => {
+      // Don't let Grok interrupt itself if its own reply says the wake phrase.
+      if (WAKE_RE.test(lastSpokenRef.current)) return;
+      console.log("[voice] barge-in on wake word");
+      interruptGrok();
+    },
+  });
+
   const { supported, micLive, interim, startCommand } = useGrokListener({
-    // Mute recognition while Grok is talking — browser STT will hear speakers otherwise.
-    enabled: micArmed && (phase === "idle" || phase === "listening"),
+    enabled: listenerEnabled,
     onSpeechStart: () => {
       setError(null);
       setReply("");
@@ -738,10 +845,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
   useEffect(() => {
     const el = videoRef.current;
-    if (!el) return;
+    if (!el || live) return; // the camera hook owns playback in live mode
     el.volume = WAKE_DUCK;
     void el.play().catch(() => {});
-  }, [video.src]);
+  }, [video.src, live]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -774,6 +881,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       }
 
       if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
+        if (live) return; // nothing to scrub through on a camera feed
         event.preventDefault();
         const step = event.shiftKey ? 1 : 5;
         scrubBy(event.code === "ArrowLeft" ? -step : step);
@@ -790,7 +898,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, startCommand]);
+  }, [phase, startCommand, live]);
 
   useEffect(() => {
     return () => {
@@ -808,7 +916,29 @@ export default function VideoPlayer({ video, onBack }: Props) {
         <button type="button" className="back-btn" onClick={onBack}>
           ← Library
         </button>
-        <div className="player-title">{video.title}</div>
+        <div className="player-title">
+          {video.title}
+          {live && (
+            <span className="live-pill" title={camera.activeLabel}>
+              <span className="live-pill-dot" />
+              {camera.starting ? "STARTING" : "LIVE"}
+            </span>
+          )}
+        </div>
+        {live && camera.devices.length > 1 && (
+          <select
+            className="camera-select"
+            value={camera.activeDeviceId ?? ""}
+            onChange={(e) => setCameraId(e.target.value)}
+            title="Camera source"
+          >
+            {camera.devices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        )}
         <button
           type="button"
           className={`mic-btn ${voiceBusy || micLive ? "active" : ""} ${micLive && !voiceBusy ? "hot" : ""}`}
@@ -831,9 +961,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
         <video
           ref={videoRef}
           className="player-video"
-          src={video.src}
+          // srcObject is set by useCameraStream — never both.
+          src={live ? undefined : video.src}
           playsInline
-          loop
+          muted={live}
+          loop={!live}
           onClick={() => {
             const el = videoRef.current;
             if (!el) return;
@@ -850,10 +982,34 @@ export default function VideoPlayer({ video, onBack }: Props) {
             else setHighlights(next);
           }}
         />
+        {ghost && !ghost.loading && (
+          <GhostOverlay
+            videoRef={videoRef}
+            ghost={ghost}
+            onDismiss={clearGhost}
+          />
+        )}
+        {live && camera.starting && !camera.error && (
+          <div className="camera-status" role="status" aria-live="polite">
+            <span className="detect-status-spinner" aria-hidden />
+            <span>Opening the camera…</span>
+          </div>
+        )}
+        {live && camera.error && (
+          <div className="camera-status error" role="alert">
+            {camera.error}
+          </div>
+        )}
         {detecting && (
           <div className="detect-status" role="status" aria-live="polite">
             <span className="detect-status-spinner" aria-hidden />
             <span>Finding it…</span>
+          </div>
+        )}
+        {ghost?.loading && (
+          <div className="detect-status" role="status" aria-live="polite">
+            <span className="detect-status-spinner" aria-hidden />
+            <span>Working out the motion…</span>
           </div>
         )}
         <MiniSpotify
@@ -950,7 +1106,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           type="button"
           className="interrupt-btn"
           onClick={interruptGrok}
-          title="Stop Grok"
+          title="Stop Grok — or just say “Hey Grok”"
         >
           <span className="interrupt-icon" aria-hidden />
           Stop
