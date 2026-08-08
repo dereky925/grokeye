@@ -484,6 +484,180 @@ video {
   }
 }
 
+.mini-twitter {
+  position: absolute;
+  right: 0.9rem;
+  bottom: 0.9rem;
+  z-index: 55;
+  width: min(360px, calc(100% - 1.8rem));
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(165deg, rgba(12, 14, 18, 0.92), rgba(8, 9, 12, 0.88));
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.94);
+  animation: interrupt-in 0.22s ease both;
+}
+
+.mini-twitter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.75rem 0.55rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mini-twitter-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.mini-twitter-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  color: #000;
+  font-weight: 800;
+  font-size: 0.95rem;
+  flex: 0 0 auto;
+}
+
+.mini-twitter-copy {
+  min-width: 0;
+}
+
+.mini-twitter-title {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-twitter-sub {
+  margin: 0.08rem 0 0;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.mini-twitter-close {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.95rem;
+  padding: 0.2rem 0.35rem;
+  cursor: pointer;
+}
+
+.mini-twitter-panel,
+.mini-twitter-tweet,
+.mini-twitter-video-wrap {
+  padding: 0.75rem;
+}
+
+.mini-twitter-msg {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.mini-twitter-author {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.55rem;
+}
+
+.mini-twitter-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.mini-twitter-name {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.mini-twitter-handle {
+  margin: 0.05rem 0 0;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.mini-twitter-tweet-text {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  max-height: 7.5rem;
+  overflow: auto;
+}
+
+.mini-twitter-media {
+  width: 100%;
+  margin-top: 0.6rem;
+  border-radius: 12px;
+  max-height: 180px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.mini-twitter-video {
+  width: 100%;
+  display: block;
+  border-radius: 12px;
+  background: #000;
+  max-height: 220px;
+}
+
+.mini-twitter-video-meta {
+  margin-top: 0.55rem;
+}
+
+.mini-twitter-hint,
+.mini-twitter-linkish {
+  margin: 0.45rem 0 0;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.mini-twitter-linkish {
+  border: 0;
+  background: transparent;
+  color: #7ec8ff;
+  cursor: pointer;
+  padding: 0;
+}
+
+.mini-twitter-error {
+  margin: 0;
+  padding: 0 0.75rem 0.7rem;
+  font-size: 0.7rem;
+  color: #ff8f8f;
+}
+
+@media (max-width: 640px) {
+  .mini-twitter {
+    left: 0.65rem;
+    right: 0.65rem;
+    width: auto;
+  }
+}
+
 .interrupt-btn {
   position: absolute;
   right: 1rem;

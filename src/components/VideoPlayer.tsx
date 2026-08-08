@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import VoiceBubble from "./VoiceBubble";
 import MiniSpotify from "./MiniSpotify";
+import MiniTwitter from "./MiniTwitter";
 import ManualOverlay from "./ManualOverlay";
 import VideoHighlights from "./VideoHighlights";
 import {
@@ -11,6 +12,7 @@ import {
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
 import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
+import { useTwitterFeed } from "../hooks/useTwitterFeed";
 import {
   normalizeLabels,
   wantsHighlight,
@@ -24,6 +26,7 @@ import {
   speakText,
 } from "../lib/manual";
 import { parseSpotifyAction } from "../lib/spotify";
+import { parseTwitterAction } from "../lib/twitter";
 import type {
   HighlightLabel,
   ManualOverlayState,
@@ -44,7 +47,7 @@ function looksLikeEcho(heard: string, spoken: string) {
   const raw = heard.toLowerCase();
   // Fresh user commands should never be treated as speaker bleed.
   if (
-    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause)\b/.test(
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|starship|spacex)\b/.test(
       raw,
     )
   ) {
@@ -90,12 +93,18 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [detecting, setDetecting] = useState(false);
   const [spotifyOpen, setSpotifyOpen] = useState(false);
   const spotifyOpenRef = useRef(false);
+  const [twitterOpen, setTwitterOpen] = useState(false);
+  const twitterOpenRef = useRef(false);
   const voiceBusy = phase !== "idle";
   const spotify = useSpotifyPlayer();
+  const twitter = useTwitterFeed();
 
   useEffect(() => {
     spotifyOpenRef.current = spotifyOpen;
   }, [spotifyOpen]);
+  useEffect(() => {
+    twitterOpenRef.current = twitterOpen;
+  }, [twitterOpen]);
 
   useEffect(() => {
     manualRef.current = manual;
@@ -226,6 +235,64 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setPhase("thinking");
 
       try {
+        const twitterAction = parseTwitterAction(heard, twitterOpenRef.current);
+        if (twitterAction?.type === "open_twitter") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          if (!twitter.tweets.length) {
+            void twitter.openAccount("SpaceX").catch((err) => {
+              setError(err instanceof Error ? err.message : "Twitter failed");
+            });
+          }
+          return;
+        }
+        if (twitterAction?.type === "close_twitter") {
+          twitter.setPlaying(null);
+          setTwitterOpen(false);
+          twitterOpenRef.current = false;
+          return;
+        }
+        if (twitterAction?.type === "scroll_next") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          if (!twitter.tweets.length) {
+            void twitter.openAccount("SpaceX").then(() => twitter.scrollNext());
+          } else {
+            twitter.scrollNext();
+          }
+          return;
+        }
+        if (twitterAction?.type === "scroll_prev") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          twitter.scrollPrev();
+          return;
+        }
+        if (twitterAction?.type === "open_account") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          void twitter.openAccount(twitterAction.username).catch((err) => {
+            setError(err instanceof Error ? err.message : "Could not open account");
+          });
+          return;
+        }
+        if (twitterAction?.type === "search") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          void twitter.search(twitterAction.query).catch((err) => {
+            setError(err instanceof Error ? err.message : "Twitter search failed");
+          });
+          return;
+        }
+        if (twitterAction?.type === "play_starship") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          void twitter.playStarship().catch((err) => {
+            setError(err instanceof Error ? err.message : "No Starship video found");
+          });
+          return;
+        }
+
         const spotifyAction = parseSpotifyAction(heard, spotifyOpenRef.current);
         if (spotifyAction?.type === "open_spotify" || spotifyAction?.type === "nudge_play") {
           setSpotifyOpen(true);
@@ -447,7 +514,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
       }
     },
-    [armMicSoon, playAudioUrl, playSpoken, spotify, video.description, video.detectorPack, video.title],
+    [armMicSoon, playAudioUrl, playSpoken, spotify, twitter, video.description, video.detectorPack, video.title],
   );
 
   const { supported, micLive, interim, startCommand } = useGrokListener({
@@ -635,6 +702,23 @@ export default function VideoPlayer({ video, onBack }: Props) {
           onEnable={() => {
             void spotify.enablePlayback().catch(() => {});
           }}
+        />
+        <MiniTwitter
+          open={twitterOpen}
+          onClose={() => {
+            twitter.setPlaying(null);
+            setTwitterOpen(false);
+          }}
+          configured={twitter.configured}
+          loading={twitter.loading}
+          error={twitter.error}
+          user={twitter.user}
+          queryLabel={twitter.queryLabel}
+          current={twitter.current}
+          index={twitter.index}
+          total={twitter.tweets.length}
+          playing={twitter.playing}
+          onStopVideo={() => twitter.setPlaying(null)}
         />
       </div>
 
