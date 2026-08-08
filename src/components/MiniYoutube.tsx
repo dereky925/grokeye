@@ -16,8 +16,6 @@ type Props = {
   index: number;
   total: number;
   seekRequest?: YoutubeSeekRequest | null;
-  /** Mute the embed so always-on STT doesn't hear video dialogue. */
-  muted?: boolean;
 };
 
 function ytCommand(
@@ -41,7 +39,6 @@ export default function MiniYoutube({
   index,
   total,
   seekRequest = null,
-  muted = false,
 }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const timeRef = useRef(0);
@@ -91,13 +88,6 @@ export default function MiniYoutube({
     ytCommand(win, "seekTo", [next, true]);
     ytCommand(win, "playVideo", []);
   }, [seekRequest?.seq, open, current?.id]);
-
-  // Mute while the user is talking so STT doesn't hear the video.
-  useEffect(() => {
-    if (!open || !current) return;
-    const win = iframeRef.current?.contentWindow;
-    ytCommand(win, muted ? "mute" : "unMute", []);
-  }, [muted, open, current?.id]);
 
   if (!open) return null;
 
