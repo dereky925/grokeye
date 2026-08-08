@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import VoiceBubble from "./VoiceBubble";
+import MiniSpotify from "./MiniSpotify";
+import MiniTwitter from "./MiniTwitter";
 import ManualOverlay from "./ManualOverlay";
 import ToolsOverlay from "./ToolsOverlay";
 import VideoHighlights from "./VideoHighlights";
@@ -10,6 +12,8 @@ import {
   useGrokListener,
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
+import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
+import { useTwitterFeed } from "../hooks/useTwitterFeed";
 import {
   normalizeLabels,
   wantsHighlight,
@@ -25,6 +29,8 @@ import {
 } from "../lib/manual";
 import { snapCommand } from "../lib/commands";
 import { fetchTools, listPhrase, wantsTools } from "../lib/tools";
+import { parseSpotifyAction } from "../lib/spotify";
+import { parseTwitterAction } from "../lib/twitter";
 import type {
   HighlightLabel,
   ManualOverlayState,
@@ -43,8 +49,17 @@ const NORMAL_VOLUME = 1;
 
 /** Drop STT that is mostly Grok reading its own reply back into the mic. */
 function looksLikeEcho(heard: string, spoken: string) {
-  const a = heard
-    .toLowerCase()
+  const raw = heard.toLowerCase();
+  // Fresh user commands should never be treated as speaker bleed.
+  if (
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|starship|spacex)\b/.test(
+      raw,
+    )
+  ) {
+    return false;
+  }
+
+  const a = raw
     .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2);
@@ -53,14 +68,14 @@ function looksLikeEcho(heard: string, spoken: string) {
     .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2);
-  if (a.length < 2 || b.length < 2) return false;
+  if (a.length < 3 || b.length < 3) return false;
   const setB = new Set(b);
   const overlap = a.filter((w) => setB.has(w)).length;
-  if (overlap / a.length >= 0.55) return true;
+  if (overlap / a.length >= 0.7) return true;
   const heardJoin = a.join(" ");
   const spokenJoin = b.join(" ");
-  if (heardJoin.length >= 12 && spokenJoin.includes(heardJoin)) return true;
-  if (spokenJoin.length >= 12 && heardJoin.includes(spokenJoin.slice(0, 48))) {
+  if (heardJoin.length >= 18 && spokenJoin.includes(heardJoin)) return true;
+  if (spokenJoin.length >= 18 && heardJoin.includes(spokenJoin.slice(0, 48))) {
     return true;
   }
   return false;
@@ -83,7 +98,20 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [tools, setTools] = useState<ToolsState | null>(null);
   const [highlights, setHighlights] = useState<HighlightLabel[]>([]);
   const [detecting, setDetecting] = useState(false);
+  const [spotifyOpen, setSpotifyOpen] = useState(false);
+  const spotifyOpenRef = useRef(false);
+  const [twitterOpen, setTwitterOpen] = useState(false);
+  const twitterOpenRef = useRef(false);
   const voiceBusy = phase !== "idle";
+  const spotify = useSpotifyPlayer();
+  const twitter = useTwitterFeed();
+
+  useEffect(() => {
+    spotifyOpenRef.current = spotifyOpen;
+  }, [spotifyOpen]);
+  useEffect(() => {
+    twitterOpenRef.current = twitterOpen;
+  }, [twitterOpen]);
 
   useEffect(() => {
     manualRef.current = manual;
@@ -202,6 +230,113 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setPhase("thinking");
 
       try {
+        const twitterAction = parseTwitterAction(heard, twitterOpenRef.current);
+        if (twitterAction?.type === "open_twitter") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          if (!twitter.tweets.length) {
+            void twitter.openAccount("SpaceX").catch((err) => {
+              setError(err instanceof Error ? err.message : "Twitter failed");
+            });
+          }
+          return;
+        }
+        if (twitterAction?.type === "close_twitter") {
+          twitter.setPlaying(null);
+          setTwitterOpen(false);
+          twitterOpenRef.current = false;
+          return;
+        }
+        if (twitterAction?.type === "scroll_next") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          if (!twitter.tweets.length) {
+            void twitter.openAccount("SpaceX").then(() => twitter.scrollNext());
+          } else {
+            twitter.scrollNext();
+          }
+          return;
+        }
+        if (twitterAction?.type === "scroll_prev") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          twitter.scrollPrev();
+          return;
+        }
+        if (twitterAction?.type === "open_account") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          void twitter.openAccount(twitterAction.username).catch((err) => {
+            setError(err instanceof Error ? err.message : "Could not open account");
+          });
+          return;
+        }
+        if (twitterAction?.type === "search") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          void twitter.search(twitterAction.query).catch((err) => {
+            setError(err instanceof Error ? err.message : "Twitter search failed");
+          });
+          return;
+        }
+        if (twitterAction?.type === "play_starship") {
+          setTwitterOpen(true);
+          twitterOpenRef.current = true;
+          void twitter.playStarship().catch((err) => {
+            setError(err instanceof Error ? err.message : "No Starship video found");
+          });
+          return;
+        }
+
+        const spotifyAction = parseSpotifyAction(heard, spotifyOpenRef.current);
+        if (spotifyAction?.type === "open_spotify" || spotifyAction?.type === "nudge_play") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          // Don't block the voice loop — otherwise UI sticks on Thinking.
+          void spotify.playBowie().catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Spotify is not ready yet";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "play_query") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          void spotify.playQuery(spotifyAction.query).catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Could not play that";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "next_track") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          void spotify.nextTrack().catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Could not skip track";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "previous_track") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          void spotify.previousTrack().catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Could not go to previous";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "close_spotify") {
+          void spotify.pause().catch(() => {});
+          setSpotifyOpen(false);
+          spotifyOpenRef.current = false;
+          return;
+        }
+
         const open = Boolean(manualRef.current);
         const toolsOpen = Boolean(toolsRef.current);
         // Exact regex first; fall back to fuzzy command snapping over all
@@ -453,7 +588,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
       }
     },
-    [armMicSoon, playAudioUrl, video.description, video.detectorPack, video.title],
+    [
+      armMicSoon,
+      playAudioUrl,
+      spotify,
+      twitter,
+      video.description,
+      video.detectorPack,
+      video.title,
+    ],
   );
 
   const { supported, micLive, interim, startCommand } = useGrokListener({
@@ -469,6 +612,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
     onQuestion: (text, alternatives) => {
       if (looksLikeEcho(text, lastSpokenRef.current)) {
         console.log("[voice] ignoring likely TTS echo:", text);
+        setPhase("idle");
+        setTranscript("");
+        if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
         return;
       }
       void handleQuestion(text, alternatives);
@@ -500,10 +646,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    if (phase === "idle") el.volume = WAKE_DUCK;
-    if (phase === "speaking") el.volume = 0.08;
+    if (phase === "idle") el.volume = spotifyOpen ? 0.02 : WAKE_DUCK;
+    if (phase === "speaking") el.volume = 0.05;
     if (phase === "listening") el.volume = 0.02;
-  }, [phase]);
+  }, [phase, spotifyOpen]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -625,6 +771,37 @@ export default function VideoPlayer({ video, onBack }: Props) {
             <span>Finding it…</span>
           </div>
         )}
+        <MiniSpotify
+          open={spotifyOpen}
+          onClose={() => setSpotifyOpen(false)}
+          configured={spotify.configured}
+          authenticated={spotify.authenticated}
+          activated={spotify.activated}
+          isPlaying={spotify.isPlaying}
+          track={spotify.track}
+          error={spotify.error}
+          onLogin={spotify.login}
+          onEnable={() => {
+            void spotify.enablePlayback().catch(() => {});
+          }}
+        />
+        <MiniTwitter
+          open={twitterOpen}
+          onClose={() => {
+            twitter.setPlaying(null);
+            setTwitterOpen(false);
+          }}
+          configured={twitter.configured}
+          loading={twitter.loading}
+          error={twitter.error}
+          user={twitter.user}
+          queryLabel={twitter.queryLabel}
+          current={twitter.current}
+          index={twitter.index}
+          total={twitter.tweets.length}
+          playing={twitter.playing}
+          onStopVideo={() => twitter.setPlaying(null)}
+        />
       </div>
 
       {manual && (
