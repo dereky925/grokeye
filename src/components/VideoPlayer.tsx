@@ -127,6 +127,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
     seq: number;
     seconds: number;
   } | null>(null);
+  /** While a YouTube video is up, mic stays off until the user taps Talk (or G). */
+  const [talkGate, setTalkGate] = useState(false);
+  const phaseRef = useRef<VoicePhase>(phase);
   const voiceBusy = phase !== "idle";
   const spotify = useSpotifyPlayer();
   const twitter = useTwitterFeed();
@@ -141,6 +144,27 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     youtubeOpenRef.current = youtubeOpen;
   }, [youtubeOpen]);
+
+  const youtubeNeedsPtt = youtubeOpen && Boolean(youtube.current);
+
+  useEffect(() => {
+    if (!youtubeNeedsPtt) setTalkGate(false);
+  }, [youtubeNeedsPtt]);
+
+  // After a voice turn finishes, re-lock the mic so YouTube audio can't trigger STT.
+  useEffect(() => {
+    const prev = phaseRef.current;
+    phaseRef.current = phase;
+    if (
+      phase === "idle" &&
+      (prev === "listening" ||
+        prev === "thinking" ||
+        prev === "speaking" ||
+        prev === "error")
+    ) {
+      setTalkGate(false);
+    }
+  }, [phase]);
 
   useEffect(() => {
     manualRef.current = manual;
@@ -777,7 +801,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
   // Mute the main recognizer while Grok is talking — browser STT will hear the
   // speakers otherwise.
-  const listenerEnabled = micArmed && (phase === "idle" || phase === "listening");
+  const listenerEnabled =
+    micArmed &&
+    (phase === "idle" || phase === "listening") &&
+    (!youtubeNeedsPtt || talkGate);
 
   // Barge-in: while Grok is thinking or talking, a wake-word-only recognizer
   // takes over so "Hey Grok" can cut the answer short. Only one recognition can
@@ -793,8 +820,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
   });
 
   const { supported, micLive, interim, startCommand } = useGrokListener({
-    enabled: listenerEnabled,
-    onSpeechStart: () => {
+    // Mute recognition while Grok is talking — browser STT will hear speakers otherwise.
+    // While YouTube is playing, require Talk/G first so video dialogue isn't transcribed.
+    enabled: listenerEnabled,    onSpeechStart: () => {
       setError(null);
       setReply("");
       setTranscript("");
@@ -812,6 +840,13 @@ export default function VideoPlayer({ video, onBack }: Props) {
       void handleQuestion(text, alternatives);
     },
   });
+
+  const beginTalk = useCallback(() => {
+    setError(null);
+    setReply("");
+    setTranscript("");
+    setTalkGate(true);
+  }, []);
 
   useEffect(() => {
     if (phase === "listening" && interim) setTranscript(interim);
@@ -875,7 +910,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
       if (event.code === "KeyG" && !event.metaKey && !event.ctrlKey && !event.altKey) {
         if (phase === "idle") {
           event.preventDefault();
-          startCommand();
+          if (youtubeNeedsPtt) beginTalk();
+          else startCommand();
         }
         return;
       }
@@ -898,7 +934,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, startCommand, live]);
+  }, [phase, startCommand, live, youtubeNeedsPtt, beginTalk]);
 
   useEffect(() => {
     return () => {
@@ -1053,6 +1089,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           index={youtube.index}
           total={youtube.videos.length}
           seekRequest={youtubeSeek}
+          muted={youtubeNeedsPtt && talkGate}
         />
       </div>
 
@@ -1110,6 +1147,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
         >
           <span className="interrupt-icon" aria-hidden />
           Stop
+        </button>
+      )}
+
+      {!canInterrupt && youtubeNeedsPtt && phase === "idle" && !talkGate && (
+        <button
+          type="button"
+          className="interrupt-btn talk-btn"
+          onClick={beginTalk}
+          title="Talk while YouTube is muted (or press G)"
+        >
+          Talk
         </button>
       )}
     </div>

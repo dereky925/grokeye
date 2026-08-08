@@ -20,7 +20,15 @@ export function wantsHighlight(message: string): boolean {
   }
   if (/\b(point|points|pointing)\s+(to|at|out)\b/.test(t)) return true;
   if (/\bshow\s+(me\s+)?where\b/.test(t)) return true;
-  if (/\bwhere\s+(is|are)\s+(the|my|that|this)\b/.test(t)) return true;
+  // "where is the salmon" / "where's the salmon" / "wheres the salmon"
+  if (
+    /\bwhere(?:'?s|\s+is|\s+are)\s+(?:the\s+|my\s+|that\s+|this\s+|a\s+|an\s+)?\w+/.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  if (/\bwheres\s+(?:the\s+|my\s+|a\s+)?\w+/.test(t)) return true;
   if (
     /\b(what('s|\s+is)\s+(this|that)|what\s+am\s+i\s+(looking|seeing)|identify|what's\s+that)\b/.test(
       t,

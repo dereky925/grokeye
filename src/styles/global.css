@@ -845,6 +845,10 @@ video {
   border-color: rgba(255, 255, 255, 0.32);
 }
 
+.talk-btn {
+  padding-left: 0.95rem;
+}
+
 .interrupt-icon {
   width: 0.72rem;
   height: 0.72rem;
