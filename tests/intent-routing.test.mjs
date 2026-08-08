@@ -12,6 +12,7 @@ let parseToolsAction;
 let wantsHighlight;
 let findCatalogChoreography;
 let catalogMotionCues;
+let resolveInstructionRoute;
 
 before(async () => {
   vite = await createServer({
@@ -27,6 +28,9 @@ before(async () => {
   ));
   ({ parseToolsAction } = await vite.ssrLoadModule("/src/lib/tools.ts"));
   ({ wantsHighlight } = await vite.ssrLoadModule("/src/lib/highlights.ts"));
+  ({ resolveInstructionRoute } = await vite.ssrLoadModule(
+    "/src/lib/instructionRouting.ts",
+  ));
   ({
     findCatalogChoreography,
     CATALOG_MOTION_CUES: catalogMotionCues,
@@ -113,6 +117,71 @@ test("explicit visible how-to requests trigger motion guidance", () => {
   ]) {
     assert.equal(wantsMotionGuidance(message), false, message);
   }
+});
+
+test("catalog motion wins over broad manual and ghost grammars", () => {
+  for (const message of [
+    "How do I bend it?",
+    "Show me how to turn this",
+    "Which way should I pull it?",
+  ]) {
+    const route = resolveInstructionRoute({
+      primary: message,
+      alternatives: [],
+      manualOpen: true,
+      toolsOpen: false,
+      videoId: "pov-copper-plumbing",
+      currentTime: 1,
+    });
+    assert.equal(route?.kind, "catalog_motion", message);
+    assert.equal(route?.cue.id, "plumbing-bend-copper", message);
+  }
+});
+
+test("unknown visible motion avoids accidental manual opening", () => {
+  const route = resolveInstructionRoute({
+    primary: "How do I bend it?",
+    alternatives: [],
+    manualOpen: false,
+    toolsOpen: false,
+    videoId: "unknown-video",
+    currentTime: 1,
+  });
+  assert.equal(route?.kind, "motion");
+});
+
+test("a correct speech alternative can recover the catalog motion route", () => {
+  const route = resolveInstructionRoute({
+    primary: "How do I bend",
+    alternatives: ["How do I bend it?"],
+    manualOpen: false,
+    videoId: "pov-copper-plumbing",
+    currentTime: 1,
+  });
+  assert.equal(route?.kind, "catalog_motion");
+  assert.equal(route?.cue.id, "plumbing-bend-copper");
+});
+
+test("general procedures and existing manual controls stay manual", () => {
+  const open = resolveInstructionRoute({
+    primary: "How do I bend copper pipe?",
+    alternatives: [],
+    manualOpen: false,
+    videoId: "pov-copper-plumbing",
+    currentTime: 1,
+  });
+  assert.equal(open?.kind, "manual");
+  assert.equal(open?.action.type, "open_manual");
+
+  const next = resolveInstructionRoute({
+    primary: "Next step",
+    alternatives: [],
+    manualOpen: true,
+    videoId: "pov-copper-plumbing",
+    currentTime: 1,
+  });
+  assert.equal(next?.kind, "manual");
+  assert.equal(next?.action.type, "next_step");
 });
 
 test("toolkit questions open the tools dropdown", () => {
@@ -231,6 +300,18 @@ test("authored choreography covers every catalog video and is documented", () =>
     "utf8",
   );
   const covered = new Set(catalogMotionCues.map((cue) => cue.videoId));
+
+  for (const cue of catalogMotionCues) {
+    assert.ok(
+      cue.previewAt >= cue.start && cue.previewAt < cue.end,
+      `${cue.id} preview is inside its scene window`,
+    );
+    assert.match(cue.outline, /^M\s/, `${cue.id} has an authored silhouette`);
+    assert.match(cue.motionPath, /^M\s/, `${cue.id} has an authored motion rail`);
+    if (cue.mode === "morph") {
+      assert.ok(cue.destination, `${cue.id} has a destination silhouette`);
+    }
+  }
 
   for (const video of manifest) {
     assert.equal(covered.has(video.id), true, `${video.id} has an authored cue`);
