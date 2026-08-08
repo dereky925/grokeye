@@ -138,6 +138,7 @@ export async function fetchTools(input: {
   stepText?: string;
   stepNumber?: number | null;
   videoTitle?: string;
+  videoDescription?: string;
 }): Promise<Tool[]> {
   const res = await fetch("/api/step-tools", {
     method: "POST",

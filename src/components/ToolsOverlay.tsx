@@ -13,22 +13,23 @@ export default function ToolsOverlay({
   onChangePosition,
   onClose,
 }: Props) {
-  const [failed, setFailed] = useState<Set<number>>(new Set());
+  // Keyed by URL, not list index — indices repeat across refetches.
+  const [failed, setFailed] = useState<Set<string>>(new Set());
   const { tools, stepNumber, loading, x, y } = state;
 
   const { dragging, dragHandlers } = useDraggablePanel({
     x,
     y,
     onChange: onChangePosition,
-    width: 168,
+    width: 184,
     height: 220,
   });
 
-  const markFailed = (i: number, src: string) => {
+  const markFailed = (src: string) => {
     console.warn("[tools] image failed to load:", src);
     setFailed((prev) => {
       const next = new Set(prev);
-      next.add(i);
+      next.add(src);
       return next;
     });
   };
@@ -69,11 +70,11 @@ export default function ToolsOverlay({
               return (
                 <div className="tool-card" key={`${tool.name}-${i}`}>
                   <div className="tool-thumb">
-                    {src && !failed.has(i) ? (
+                    {src && !failed.has(src) ? (
                       <img
                         src={src}
                         alt={tool.name}
-                        onError={() => markFailed(i, src)}
+                        onError={() => markFailed(src)}
                       />
                     ) : (
                       <svg

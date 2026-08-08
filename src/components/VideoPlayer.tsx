@@ -868,6 +868,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
               stepText,
               stepNumber,
               videoTitle: video.title,
+              videoDescription: video.description,
             });
           } catch (err) {
             if (sessionId !== sessionRef.current) return;
