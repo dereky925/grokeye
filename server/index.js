@@ -413,6 +413,453 @@ app.post("/api/labels", async (req, res) => {
   }
 });
 
+// Geometry-only sidecar for visible hand/tool motion. Runs beside /api/chat;
+// it never delays the spoken answer and never invents an animation when the
+// requested action or required tool is absent from the frame.
+app.post("/api/guide", async (req, res) => {
+  try {
+    const message = String(req.body?.message || "").trim();
+    const frame = String(req.body?.frame || "");
+    const videoTitle = String(req.body?.videoTitle || "").trim();
+    if (!message) {
+      return res.status(400).json({ error: "message is required" });
+    }
+    if (!frame.startsWith("data:image")) {
+      return res.status(400).json({ error: "a frame is required" });
+    }
+
+    const model = "grok-4.5";
+    const system = [
+      "You ground a short AR motion demonstration onto one real worker-view frame.",
+      "Return ONLY valid JSON with no markdown matching:",
+      '{"status":"ready|wrong_tool|not_visible|unsafe_to_show","note":"short HUD text","labels":[{"text":"Pivot","kind":"box","x":0,"y":0,"w":0,"h":0},{"text":"Move this","kind":"box","x":0,"y":0,"w":0,"h":0}],"motion":{"type":"arc|rotate|line","pivot":0,"moving":1,"direction":"clockwise|counterclockwise|toward|away|up|down|left|right","sweep":75,"label":"Pull steadily"}}',
+      "All label coordinates are normalized 0–1 from the image top-left. Use tight boxes.",
+      "ready requires exactly two clearly visible labels: index 0 is the stationary pivot/reference and index 1 is the hand, handle, or part that moves.",
+      "For arc/rotate use clockwise or counterclockwise. For line use toward, away, up, down, left, or right. sweep is 25–150 degrees and applies to arc/rotate.",
+      "The motion must describe the physically useful visible gesture, not camera movement.",
+      "If the request names an action but the visible tool performs a different action, return wrong_tool, motion null, and one tight label on the actual tool whose text explains the mismatch.",
+      "Example: a tubing cutter is not a pipe bender. A bend request over a cutter frame is wrong_tool, never ready.",
+      "If the needed tool, hand, workpiece, or pivot is not clearly visible, return not_visible with motion null. Do not guess off-screen geometry.",
+      "If showing the motion from this frame could be unsafe or correctness depends on hidden state, return unsafe_to_show with motion null.",
+      "For every non-ready status, labels may contain at most one visible attention box and motion must be null.",
+      "Keep note and motion.label imperative, specific, and under 7 words.",
+      videoTitle ? `Video title: ${videoTitle}.` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const body = JSON.stringify({
+      model,
+      temperature: 0.1,
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `Show the visible motion for: ${message}` },
+            {
+              type: "image_url",
+              image_url: { url: frame, detail: "low" },
+            },
+          ],
+        },
+      ],
+    });
+
+    const parseGuide = (data) => {
+      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+      const parsed = parseManualJson(raw);
+      const statuses = new Set([
+        "ready",
+        "wrong_tool",
+        "not_visible",
+        "unsafe_to_show",
+      ]);
+      const status = String(parsed.status || "");
+      const note = String(parsed.note || "").trim().slice(0, 80);
+      const labels = Array.isArray(parsed.labels) ? parsed.labels.slice(0, 2) : [];
+      const motion = parsed.motion && typeof parsed.motion === "object"
+        ? parsed.motion
+        : null;
+      if (!statuses.has(status) || !note) {
+        throw new Error("Invalid guide contract");
+      }
+      if (status === "ready" && (labels.length !== 2 || !motion)) {
+        throw new Error("Ready guide lacks grounded motion");
+      }
+      return {
+        status,
+        note,
+        labels: status === "ready" ? labels : labels.slice(0, 1),
+        motion: status === "ready" ? motion : null,
+      };
+    };
+
+    // Motion needs to land while it is useful. Hedge the same way as labels,
+    // but accept only a response that also passes the strict guide contract.
+    const controllers = [new AbortController(), new AbortController()];
+    const attempt = (index) =>
+      fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body,
+        signal: controllers[index].signal,
+      }).then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error?.message || "Motion guide request failed");
+        }
+        return parseGuide(data);
+      });
+
+    try {
+      const guide = await Promise.any(controllers.map((_, i) => attempt(i)));
+      return res.json({ ...guide, model });
+    } catch (err) {
+      console.error("Motion guide error:", err.errors?.[0] || err);
+      return res.status(502).json({ error: "unusable_guidance" });
+    } finally {
+      for (const controller of controllers) controller.abort();
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Motion guidance failed" });
+  }
+});
+
+// "Phillips screwdriver" counts as in view when the sight pass saw
+// "screwdriver": containment either way, or any shared word of 4+ letters.
+function toolMatchesVisible(name, visibleNames) {
+  const norm = (s) =>
+    String(s)
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const n = norm(name);
+  if (!n) return false;
+  const nWords = new Set(n.split(" ").filter((w) => w.length >= 4));
+  return visibleNames.some((v) => {
+    const s = norm(v);
+    if (!s) return false;
+    if (s.includes(n) || n.includes(s)) return true;
+    return s.split(" ").some((w) => w.length >= 4 && nWords.has(w));
+  });
+}
+
+// Tool checklist for the glassy dropdown ("what tools do I need?").
+// One combined call made grok-4.5 reason for 25-40s (per-tool grounding
+// against the frame), so the turn is split: a hedged text-only checklist
+// call (reasoning_effort low — it gates the spoken reply) races a small
+// "what tools are visible" frame call, and statuses are merged locally:
+// visible → in_view, essential-but-not-visible → missing, else unknown.
+// No frame / failed sight pass → all unknown, never a guessed status.
+app.post("/api/tools", async (req, res) => {
+  try {
+    const message = String(req.body?.message || "").trim();
+    const frame = String(req.body?.frame || "");
+    const videoTitle = String(req.body?.videoTitle || "").trim();
+    const videoDescription = String(req.body?.videoDescription || "").trim();
+    if (!message) {
+      return res.status(400).json({ error: "message is required" });
+    }
+    const hasFrame = frame.startsWith("data:image");
+
+    const model = "grok-4.5";
+    const t0 = performance.now();
+    const xaiHeaders = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+
+    // The checklist is per-job, not per-frame — cache it like manuals so a
+    // repeat ask only pays the sight pass. Statuses always merge live.
+    const cacheKey = (videoTitle || message).toLowerCase().replace(/\s+/g, " ");
+    const cached = toolsChecklistCache.get(cacheKey);
+    const cacheFresh = cached && Date.now() - cached.at < 10 * 60_000;
+
+    // The example-driven prompt keeps reasoning burn low; extra rules make
+    // the model deliberate (measured: hundreds of reasoning tokens).
+    const checklistSystem = [
+      "You name the tools a worker needs for the job they are doing. Output ONLY JSON shaped like this example, nothing else:",
+      '{"task":"Bike tire swap","spoken":"Grab tire levers and a pump. The rest can wait.","tools":[{"name":"Tire levers","purpose":"pop the bead","essential":true},{"name":"Pump","purpose":"reinflate","essential":true},{"name":"Patch kit","purpose":"fix punctures","essential":false}]}',
+      "3-6 tools in the order they get used, short names, purpose under 6 words, essential true only when the job cannot be done without it.",
+      "spoken is 1-2 plain spoken sentences naming the essentials to have ready — it goes straight to text-to-speech, so no formatting characters and no claims about what you can see.",
+      videoTitle ? `Video title: ${videoTitle}.` : "",
+      videoDescription ? `Video description: ${videoDescription}.` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const checklistBody = JSON.stringify({
+      model,
+      temperature: 0.2,
+      reasoning_effort: "low",
+      messages: [
+        { role: "system", content: checklistSystem },
+        { role: "user", content: `Job question: ${message}` },
+      ],
+    });
+
+    const parseChecklist = (data) => {
+      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+      const parsed = parseManualJson(raw);
+      const seen = new Set();
+      const tools = (Array.isArray(parsed.tools) ? parsed.tools : [])
+        .map((t) => ({
+          name: String(t?.name || "").trim().slice(0, 40),
+          purpose: String(t?.purpose || "").trim().slice(0, 60),
+          essential: Boolean(t?.essential),
+        }))
+        .filter((t) => {
+          const key = t.name.toLowerCase();
+          if (!t.name || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .slice(0, 8);
+      const spoken = stripSpokenMarkdown(parsed.spoken || "");
+      if (!tools.length || !spoken) {
+        throw new Error("Invalid toolkit contract");
+      }
+      return {
+        task: String(parsed.task || "This job").trim().slice(0, 60),
+        tools,
+        spoken,
+      };
+    };
+
+    // Checklist latency is a lottery even at low effort — hedge like /api/labels.
+    const controllers = [new AbortController(), new AbortController()];
+    const checklistAttempt = (index) =>
+      fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: xaiHeaders,
+        body: checklistBody,
+        signal: controllers[index].signal,
+      }).then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error?.message || "Toolkit request failed");
+        }
+        return parseChecklist(data);
+      });
+    const checklistJob = cacheFresh
+      ? Promise.resolve(cached.checklist)
+      : Promise.any(controllers.map((_, i) => checklistAttempt(i)));
+
+    // Sight pass: labels-style "name what you can see" — cheap, but the same
+    // latency lottery, so it's hedged too; a slow draw would otherwise cost
+    // every status.
+    const sightBody = JSON.stringify({
+      model,
+      temperature: 0.1,
+      reasoning_effort: "low",
+      messages: [
+        {
+          role: "system",
+          content:
+            'You list tools, parts, and equipment clearly visible in a worker point-of-view image. Respond with ONLY valid JSON (no markdown): {"visible":["short name"]} Name every distinct item you can clearly see, up to 12, including whatever is held in hand or being worked on. Empty array if none.',
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "List the tools, parts, and equipment visible in this frame.",
+            },
+            { type: "image_url", image_url: { url: frame, detail: "low" } },
+          ],
+        },
+      ],
+    });
+    const sightControllers = hasFrame
+      ? [new AbortController(), new AbortController()]
+      : [];
+    const sightAttempt = (index) =>
+      fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: xaiHeaders,
+        body: sightBody,
+        signal: sightControllers[index].signal,
+      }).then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error("Sight pass failed");
+        const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+        const parsed = parseManualJson(raw);
+        return (Array.isArray(parsed.visible) ? parsed.visible : []).map((v) =>
+          String(v),
+        );
+      });
+    const sightJob = hasFrame
+      ? Promise.any(sightControllers.map((_, i) => sightAttempt(i))).catch(
+          () => null,
+        )
+      : Promise.resolve(null);
+
+    let checklist;
+    try {
+      checklist = await checklistJob;
+    } catch (err) {
+      console.error("Toolkit error:", err.errors?.[0] || err);
+      return res.status(502).json({ error: "unusable_toolkit" });
+    } finally {
+      for (const controller of controllers) controller.abort();
+    }
+    if (!cacheFresh) {
+      toolsChecklistCache.set(cacheKey, { checklist, at: Date.now() });
+    }
+
+    // The sight pass runs beside the checklist. Give it a total budget from
+    // request start (a cached checklist resolves instantly and must not
+    // starve it), then fall back to honest unknowns.
+    const sightBudgetMs = Math.max(500, 8000 - (performance.now() - t0));
+    const visible = await Promise.race([
+      sightJob,
+      new Promise((resolve) => setTimeout(resolve, sightBudgetMs, null)),
+    ]);
+    for (const controller of sightControllers) controller.abort();
+
+    const tools = checklist.tools.map((t) => ({
+      ...t,
+      status: !visible
+        ? "unknown"
+        : toolMatchesVisible(t.name, visible)
+          ? "in_view"
+          : t.essential
+            ? "missing"
+            : "unknown",
+    }));
+
+    console.log(
+      `[tools] total ${Math.round(performance.now() - t0)}ms sight=${visible ? visible.length : "none"}`,
+    );
+    res.json({
+      toolkit: { task: checklist.task, tools, spoken: checklist.spoken },
+      model,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Tool checklist failed" });
+  }
+});
+
+app.post("/api/verify", async (req, res) => {
+  try {
+    const goal = String(req.body?.goal || "").trim();
+    const instruction = String(req.body?.instruction || "").trim();
+    const beforeFrame = String(req.body?.beforeFrame || "");
+    const afterFrame = String(req.body?.afterFrame || "");
+    const videoTitle = String(req.body?.videoTitle || "").trim();
+    const manualStepText = String(req.body?.manualStepText || "").trim();
+
+    if (!goal || !instruction) {
+      return res.status(400).json({ error: "goal and instruction are required" });
+    }
+    if (!beforeFrame.startsWith("data:image") || !afterFrame.startsWith("data:image")) {
+      return res.status(400).json({ error: "before and after frames are required" });
+    }
+
+    const model = "grok-4.5";
+    const system = [
+      "You verify whether a worker completed a guided physical task by comparing two real video frames.",
+      "Be conservative and truthful. Output ONLY valid JSON with no markdown matching:",
+      '{"verdict":"complete|not_complete|not_visible|unsafe_to_judge","spoken":"at most 2 short spoken sentences","attention":{"text":"short label","kind":"zone","x":0,"y":0,"w":0,"h":0}|null}',
+      "BEFORE is the frame captured when guidance was given. AFTER is the frame captured when the worker asked for verification.",
+      'If the relevant target is not clearly identifiable in either frame, verdict must be "not_visible".',
+      'If correctness depends on something the frames cannot establish — including torque, seating depth, energized state, pressure, hidden fit, or any safety-critical condition — verdict must be "unsafe_to_judge".',
+      'Under uncertainty, choose "not_visible" or "unsafe_to_judge"; never lean toward "complete".',
+      'Use "complete" only when the visible evidence clearly demonstrates the requested result.',
+      'Use "not_complete" only when the frames visibly show a specific correctable problem.',
+      'attention is allowed only for "not_complete". It must be one normalized 0–1 zone around the exact problem; otherwise return null.',
+      "The spoken field must state the verdict naturally without coordinates and without claiming access to anything outside these frames.",
+      "The spoken field goes straight to text-to-speech: plain prose only, no markdown, asterisks, or formatting characters.",
+      "Whatever the verdict, the spoken line is confident and forward-moving: lead with the call or the one thing to do or show next. Never apologize, never dwell on what you cannot see — for not_visible, just tell the worker what to point the camera at.",
+    ].join(" ");
+
+    const context = [
+      `Worker goal: ${goal}`,
+      `Guidance that was spoken: ${instruction}`,
+      videoTitle ? `Video title: ${videoTitle}` : "",
+      manualStepText ? `Current manual step: ${manualStepText}` : "",
+      "The first attached image is BEFORE, captured when the guidance was given.",
+      "The second attached image is AFTER, captured when the worker asked to verify.",
+      "Compare BEFORE with AFTER and return the verification JSON.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const response = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.1,
+        messages: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: context },
+              {
+                type: "image_url",
+                image_url: { url: beforeFrame, detail: "low" },
+              },
+              {
+                type: "image_url",
+                image_url: { url: afterFrame, detail: "low" },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      console.error("Verify error:", data);
+      return res.status(response.status).json({
+        error: data?.error?.message || "Verification request failed",
+      });
+    }
+
+    try {
+      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+      const parsed = parseManualJson(raw);
+      const verdicts = new Set([
+        "complete",
+        "not_complete",
+        "not_visible",
+        "unsafe_to_judge",
+      ]);
+      const verdict = String(parsed.verdict || "");
+      const spoken = stripSpokenMarkdown(parsed.spoken || "");
+      if (!verdicts.has(verdict) || !spoken) {
+        throw new Error("Invalid verification contract");
+      }
+      const attention =
+        verdict === "not_complete" &&
+        parsed.attention &&
+        typeof parsed.attention === "object"
+          ? parsed.attention
+          : null;
+      return res.json({ verdict, spoken, attention, model });
+    } catch (err) {
+      console.error("Verify response parse error:", err);
+      return res.status(502).json({ error: "unverifiable_response" });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Verification failed" });
+  }
+});
+
 app.post("/api/tts", async (req, res) => {
   try {
     const text = String(req.body?.text || "").trim();
@@ -519,6 +966,9 @@ function normalizeManual(parsed, fallbackTopic) {
     steps: steps.map((s, i) => ({ n: i + 1, text: s.text })),
   };
 }
+
+/** Job checklists for /api/tools, 10-min TTL — statuses always merge live. */
+const toolsChecklistCache = new Map();
 
 /** In-memory cache so the second "open sushi manual" is instant. */
 const manualCache = new Map();

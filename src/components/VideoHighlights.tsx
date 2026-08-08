@@ -4,13 +4,26 @@ import {
   getVideoContentRect,
   type VideoContentRect,
 } from "../lib/highlights";
-import type { HighlightLabel, HighlightLink } from "../types";
+import type { CatalogMotionCue } from "../lib/choreography";
+import CatalogMotionOverlay from "./CatalogMotionOverlay";
+import GuidanceMotionOverlay from "./GuidanceMotionOverlay";
+import type {
+  GuidanceMotion,
+  GuidanceStatus,
+  HighlightLabel,
+  HighlightLink,
+} from "../types";
 
 type Props = {
   videoRef: RefObject<HTMLVideoElement | null>;
   labels: HighlightLabel[];
   /** Arrows drawn between tracked labels (endpoints follow the tracker). */
   links?: HighlightLink[];
+  /** Animated physical gesture resolved to tracked label IDs. */
+  guidanceMotion?: GuidanceMotion | null;
+  /** Instant authored silhouette choreography for a known catalog scene. */
+  catalogMotion?: CatalogMotionCue | null;
+  guidanceStatus?: GuidanceStatus | null;
   onLabelsChange: (labels: HighlightLabel[]) => void;
   /**
    * Voice-synced expiry: a performance.now() timestamp (set ~2s after TTS
@@ -55,6 +68,9 @@ export default function VideoHighlights({
   videoRef,
   labels,
   links = [],
+  guidanceMotion = null,
+  catalogMotion = null,
+  guidanceStatus = null,
   onLabelsChange,
   holdUntil = null,
   seedFrame = null,
@@ -213,11 +229,13 @@ export default function VideoHighlights({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoRef, labels.map((l) => l.id).join("|"), maxMs, minHoldMs]);
 
-  if (!labels.length || !content) return null;
+  if ((!labels.length && !catalogMotion) || !content) return null;
 
   const byId = new Map(labels.map((l) => [l.id, l]));
   const sourceIds = new Set(links.map((l) => l.fromId));
   const targetIds = new Set(links.map((l) => l.toId));
+  const guidancePivotId = guidanceMotion?.pivotId;
+  const guidanceMovingId = guidanceMotion?.movingId;
   const arrows = links.flatMap((link) => {
     const from = byId.get(link.fromId);
     const to = byId.get(link.toId);
@@ -254,7 +272,9 @@ export default function VideoHighlights({
                 : sourceIds.has(label.id)
                   ? " is-source"
                   : ""
-            }`}
+            }${label.id === guidancePivotId ? " is-guidance-pivot" : ""}${
+              label.id === guidanceMovingId ? " is-guidance-moving" : ""
+            }${guidanceStatus === "wrong_tool" ? " is-guidance-warning" : ""}`}
             style={{
               left: `${label.x * 100}%`,
               top: `${label.y * 100}%`,
@@ -276,7 +296,9 @@ export default function VideoHighlights({
             )}
             {label.kind === "box" &&
               !sourceIds.has(label.id) &&
-              !targetIds.has(label.id) && (
+              !targetIds.has(label.id) &&
+              label.id !== guidancePivotId &&
+              label.id !== guidanceMovingId && (
                 <span
                   className={`video-highlight-pointer${
                     label.y < 0.15 || label.x + label.w > 0.88 ? " flip" : ""
@@ -333,6 +355,21 @@ export default function VideoHighlights({
               </g>
             ))}
           </svg>
+        )}
+        {catalogMotion && (
+          <CatalogMotionOverlay
+            cue={catalogMotion}
+            width={content.width}
+            height={content.height}
+          />
+        )}
+        {guidanceMotion && (
+          <GuidanceMotionOverlay
+            motion={guidanceMotion}
+            labels={labels}
+            width={content.width}
+            height={content.height}
+          />
         )}
       </div>
     </div>

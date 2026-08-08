@@ -16,6 +16,22 @@ export type VoicePhase =
   | "speaking"
   | "error";
 
+export type TaskStage = "awaiting_action" | "verifying" | "resolved";
+
+export type TaskVerdict =
+  | "complete"
+  | "not_complete"
+  | "not_visible"
+  | "unsafe_to_judge";
+
+export type TaskSession = {
+  goal: string;
+  instruction: string;
+  beforeFrame: string;
+  stage: TaskStage;
+  verdict?: TaskVerdict;
+};
+
 export type ManualStep = {
   n: number;
   text: string;
@@ -42,6 +58,27 @@ export type ManualOverlayState = {
   loading?: boolean;
 };
 
+/** Grounded per-tool presence: "in_view" only when visible in the sent frame. */
+export type ToolStatus = "in_view" | "missing" | "unknown";
+
+export type ToolkitItem = {
+  name: string;
+  purpose: string;
+  status: ToolStatus;
+  essential: boolean;
+};
+
+export type ToolkitDoc = {
+  task: string;
+  tools: ToolkitItem[];
+  spoken: string;
+};
+
+export type ToolkitState = {
+  doc: ToolkitDoc | null;
+  loading: boolean;
+};
+
 /** "box" = object reticle; "zone" = soft-filled region (areas, not things). */
 export type HighlightKind = "box" | "zone";
 
@@ -60,4 +97,38 @@ export type HighlightLabel = {
 export type HighlightLink = {
   fromId: string;
   toId: string;
+};
+
+export type GuidanceStatus =
+  | "ready"
+  | "wrong_tool"
+  | "not_visible"
+  | "unsafe_to_show";
+
+export type GuidanceMotionType = "arc" | "rotate" | "line";
+
+export type GuidanceDirection =
+  | "clockwise"
+  | "counterclockwise"
+  | "toward"
+  | "away"
+  | "up"
+  | "down"
+  | "left"
+  | "right";
+
+/** Motion cue resolved from model label indices to stable tracked label IDs. */
+export type GuidanceMotion = {
+  type: GuidanceMotionType;
+  pivotId: string;
+  movingId: string;
+  direction: GuidanceDirection;
+  sweep: number;
+  label: string;
+};
+
+export type GuidanceCue = {
+  status: GuidanceStatus;
+  note: string;
+  motion: GuidanceMotion | null;
 };

@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import VoiceBubble from "./VoiceBubble";
+import GuidanceStatusChip from "./GuidanceStatusChip";
 import ManualOverlay from "./ManualOverlay";
+import PlayerTransport from "./PlayerTransport";
+import TaskStateChip from "./TaskStateChip";
+import ToolsDropdown from "./ToolsDropdown";
 import VideoHighlights from "./VideoHighlights";
 import {
   askGrok,
+  askWeb,
   captureFrame,
   fetchLabels,
   needsVideoContext,
+  needsWebSearch,
   useGrokListener,
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
@@ -23,10 +29,24 @@ import {
   parseManualAction,
   speakText,
 } from "../lib/manual";
+import { fetchToolkit, parseToolsAction } from "../lib/tools";
+import { fetchVerify, parseVerifyAction } from "../lib/verify";
+import {
+  fetchGuidance,
+  normalizeGuidance,
+  wantsMotionGuidance,
+} from "../lib/guidance";
+import {
+  findCatalogChoreography,
+  type CatalogMotionCue,
+} from "../lib/choreography";
 import type {
+  GuidanceCue,
   HighlightLabel,
   HighlightLink,
   ManualOverlayState,
+  TaskSession,
+  ToolkitState,
   VideoItem,
   VoicePhase,
 } from "../types";
@@ -34,6 +54,14 @@ import type {
 type Props = {
   video: VideoItem;
   onBack: () => void;
+};
+
+type PendingTask = {
+  sessionId: number;
+  goal: string;
+  beforeFrame: string;
+  instruction: string | null;
+  link: HighlightLink[] | null;
 };
 
 const WAKE_DUCK = 0.035;
@@ -44,7 +72,7 @@ function looksLikeEcho(heard: string, spoken: string) {
   const raw = heard.toLowerCase();
   // Fresh user commands should never be treated as speaker bleed.
   if (
-    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop)\b/.test(
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|how|which|motion|direction|open|next|previous|close|stop)\b/.test(
       raw,
     )
   ) {
@@ -78,7 +106,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sessionRef = useRef(0);
   const manualRef = useRef<ManualOverlayState | null>(null);
+  const toolkitRef = useRef<ToolkitState | null>(null);
+  const taskRef = useRef<TaskSession | null>(null);
+  const pendingTaskRef = useRef<PendingTask | null>(null);
   const resumeAfterTurnRef = useRef(false);
+  const clickTimerRef = useRef<number | null>(null);
   const turnInFlightRef = useRef(false);
   const highlightHoldRef = useRef(false);
   const speechFrameRef = useRef<string | null>(null);
@@ -89,6 +121,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [ttsAudio, setTtsAudio] = useState<HTMLAudioElement | null>(null);
   const [usedVision, setUsedVision] = useState(false);
   const [manual, setManual] = useState<ManualOverlayState | null>(null);
+  const [toolkit, setToolkit] = useState<ToolkitState | null>(null);
+  const [task, setTask] = useState<TaskSession | null>(null);
+  const [guidanceCue, setGuidanceCue] = useState<GuidanceCue | null>(null);
+  const [catalogMotion, setCatalogMotion] =
+    useState<CatalogMotionCue | null>(null);
   const [highlights, setHighlights] = useState<HighlightLabel[]>([]);
   const [highlightLinks, setHighlightLinks] = useState<HighlightLink[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -100,6 +137,38 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     manualRef.current = manual;
   }, [manual]);
+
+  useEffect(() => {
+    toolkitRef.current = toolkit;
+  }, [toolkit]);
+
+  const commitTask = useCallback((next: TaskSession | null) => {
+    taskRef.current = next;
+    setTask(next);
+  }, []);
+
+  const sealTaskIfReady = useCallback(
+    (sessionId: number) => {
+      const pending = pendingTaskRef.current;
+      if (
+        !pending ||
+        pending.sessionId !== sessionId ||
+        sessionId !== sessionRef.current ||
+        pending.instruction == null ||
+        pending.link == null
+      ) {
+        return;
+      }
+      commitTask({
+        goal: pending.goal,
+        instruction: pending.instruction,
+        beforeFrame: pending.beforeFrame,
+        stage: "awaiting_action",
+      });
+      pendingTaskRef.current = null;
+    },
+    [commitTask],
+  );
 
   const [micArmed, setMicArmed] = useState(true);
   const [listenActivity, setListenActivity] = useState(0);
@@ -132,6 +201,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const clearHighlights = useCallback(() => {
     setHighlights([]);
     setHighlightLinks([]);
+    setGuidanceCue(null);
+    setCatalogMotion(null);
     setDetecting(false);
     setHoldUntil(null);
     setHighlightSeed(null);
@@ -156,9 +227,20 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
   const interruptGrok = useCallback(() => {
     sessionRef.current += 1;
+    pendingTaskRef.current = null;
+    // A toolkit still loading would spin forever once its turn is dead.
+    if (toolkitRef.current?.loading) {
+      toolkitRef.current = null;
+      setToolkit(null);
+    }
+    if (taskRef.current?.stage === "verifying") {
+      commitTask({ ...taskRef.current, stage: "awaiting_action" });
+    }
     stopTts();
     setDetecting(false);
     setScanning(false);
+    setGuidanceCue(null);
+    setCatalogMotion(null);
     setHoldUntil(null);
     highlightHoldRef.current = false;
     turnInFlightRef.current = false;
@@ -170,7 +252,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
     if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
     resumeIfAutoPaused();
     armMicSoon(350);
-  }, [armMicSoon, resumeIfAutoPaused, stopTts]);
+  }, [armMicSoon, commitTask, resumeIfAutoPaused, stopTts]);
+
+  // A guide without boxes (not visible / unsafe) still needs a bounded HUD
+  // lifetime. Box-backed guides usually clear sooner through VideoHighlights.
+  useEffect(() => {
+    if (!guidanceCue) return;
+    const timer = window.setTimeout(clearHighlights, 12000);
+    return () => window.clearTimeout(timer);
+  }, [clearHighlights, guidanceCue]);
 
   const canInterrupt =
     detecting ||
@@ -231,6 +321,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const handleQuestion = useCallback(
     async (heard: string) => {
       const sessionId = ++sessionRef.current;
+      pendingTaskRef.current = null;
       const el = videoRef.current;
       turnInFlightRef.current = true;
       setTranscript(heard);
@@ -238,6 +329,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setReply("");
       setUsedVision(false);
       setScanning(false);
+      setGuidanceCue(null);
+      setCatalogMotion(null);
       setPhase("thinking");
 
       try {
@@ -294,8 +387,143 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
-        const highlight = wantsHighlight(heard);
-        const wantFrames = highlight || needsVideoContext(heard);
+        const toolsAction = parseToolsAction(heard, Boolean(toolkitRef.current));
+        if (toolsAction) {
+          // Checklist turns render in the dropdown — let the video keep playing.
+          resumeIfAutoPaused();
+          if (toolsAction.type === "close_tools") {
+            setToolkit(null);
+            toolkitRef.current = null;
+            await playSpoken("Tool list closed.", sessionId);
+            return;
+          }
+
+          const frame =
+            speechFrameRef.current ??
+            (el ? captureFrame(el, { maxW: 768, quality: 0.62 }) : null);
+          setUsedVision(Boolean(frame));
+          const loading: ToolkitState = { doc: null, loading: true };
+          setToolkit(loading);
+          toolkitRef.current = loading;
+          setReply("One sec…");
+
+          try {
+            const doc = await fetchToolkit({
+              message: heard,
+              frame: frame ?? undefined,
+              videoTitle: video.title,
+              videoDescription: video.description,
+            });
+            if (sessionId !== sessionRef.current) return;
+            const ready: ToolkitState = { doc, loading: false };
+            setToolkit(ready);
+            toolkitRef.current = ready;
+            await playSpoken(doc.spoken, sessionId);
+          } catch {
+            if (sessionId !== sessionRef.current) return;
+            setToolkit(null);
+            toolkitRef.current = null;
+            await playSpoken(
+              "I couldn't build the tool list — try asking again.",
+              sessionId,
+            );
+          }
+          return;
+        }
+
+        const verifyAction = parseVerifyAction(heard);
+        if (verifyAction) {
+          resumeIfAutoPaused();
+          const activeTask = taskRef.current;
+          if (!activeTask) {
+            await playSpoken(
+              "I haven't guided you through anything yet.",
+              sessionId,
+            );
+            return;
+          }
+
+          const afterFrame =
+            speechFrameRef.current ??
+            (el ? captureFrame(el, { maxW: 768, quality: 0.62 }) : null);
+          if (!afterFrame) {
+            await playSpoken(
+              "I couldn't capture the view to verify that — try asking again.",
+              sessionId,
+            );
+            return;
+          }
+
+          setUsedVision(true);
+          commitTask({ ...activeTask, stage: "verifying" });
+          const openManual = manualRef.current;
+          const manualStepText = openManual?.loading
+            ? undefined
+            : openManual?.doc.steps[openManual.stepIndex]?.text;
+
+          let verification;
+          try {
+            verification = await fetchVerify({
+              goal: activeTask.goal,
+              instruction: activeTask.instruction,
+              beforeFrame: activeTask.beforeFrame,
+              afterFrame,
+              videoTitle: video.title,
+              manualStepText,
+            });
+          } catch {
+            if (sessionId !== sessionRef.current) return;
+            commitTask({ ...activeTask, stage: "awaiting_action" });
+            await playSpoken(
+              "I couldn't verify that — try asking again.",
+              sessionId,
+            );
+            return;
+          }
+
+          if (sessionId !== sessionRef.current) return;
+          clearHighlights();
+          const nextTask: TaskSession = {
+            ...activeTask,
+            stage:
+              verification.verdict === "not_complete"
+                ? "awaiting_action"
+                : "resolved",
+            verdict: verification.verdict,
+          };
+          commitTask(nextTask);
+
+          if (
+            verification.verdict === "not_complete" &&
+            verification.attention
+          ) {
+            const placed = withLabelIds(
+              normalizeLabels(
+                [{ ...verification.attention, kind: "zone" }],
+                1,
+              ),
+            );
+            if (placed.length) {
+              highlightHoldRef.current = true;
+              setHighlightSeed(afterFrame);
+              setHighlights(placed);
+            }
+          }
+
+          await playSpoken(verification.spoken, sessionId);
+          if (sessionId === sessionRef.current && highlightHoldRef.current) {
+            setHoldUntil(performance.now() + 2000);
+          }
+          return;
+        }
+
+        const motionGuidance = wantsMotionGuidance(heard);
+        const highlight = !motionGuidance && wantsHighlight(heard);
+        // Web-fact turns skip frames entirely — the answer lives online, and
+        // cached repeats come back before the video even notices.
+        const webSearch = !motionGuidance && !highlight && needsWebSearch(heard);
+        const wantFrames =
+          !webSearch && (motionGuidance || highlight || needsVideoContext(heard));
         setUsedVision(wantFrames);
 
         // Non-visual turn: the freeze-on-speech pause isn't needed after all.
@@ -311,11 +539,82 @@ export default function VideoPlayer({ video, onBack }: Props) {
           // reacted to — and fall back to a live grab if it's missing.
           const frame =
             speechFrameRef.current ??
-            captureFrame(el, highlight ? { maxW: 512, quality: 0.55 } : undefined);
+            captureFrame(
+              el,
+              highlight || motionGuidance
+                ? { maxW: 768, quality: 0.62 }
+                : undefined,
+            );
           if (frame) frames = [frame];
         }
 
+        if (motionGuidance) {
+          // Motion guidance is its own tracked visual turn, independent of
+          // connection-task seeding and the local object detector ladder.
+          commitTask(null);
+          setHighlights([]);
+          setHighlightLinks([]);
+          setHoldUntil(null);
+          setHighlightSeed(null);
+          highlightHoldRef.current = false;
+
+          const authored = findCatalogChoreography(
+            video.id,
+            currentTime,
+            heard,
+          );
+          if (authored) {
+            // Known demo footage gets instant silhouette choreography: trace
+            // the real object, then move the same outline. No model rectangle
+            // and no geometry latency.
+            setScanning(false);
+            setCatalogMotion(authored);
+            setGuidanceCue({
+              status: "ready",
+              note: authored.note,
+              motion: null,
+            });
+          } else if (frames[0]) {
+            setScanning(true);
+            void fetchGuidance({
+              message: heard,
+              frame: frames[0],
+              videoTitle: video.title,
+            })
+              .then((raw) => {
+                if (sessionId !== sessionRef.current) return;
+                setScanning(false);
+                setCatalogMotion(null);
+                const placed = withLabelIds(normalizeLabels(raw.labels));
+                const cue = normalizeGuidance(raw, placed);
+                const shown =
+                  raw.status === "ready" && cue.status !== "ready"
+                    ? []
+                    : placed;
+                highlightHoldRef.current = shown.length > 0;
+                setHighlightSeed(frames[0] ?? null);
+                setHighlights(shown);
+                setGuidanceCue(cue);
+              })
+              .catch(() => {
+                if (sessionId !== sessionRef.current) return;
+                setScanning(false);
+              });
+          }
+        }
+
         if (highlight) {
+          // A new visual guidance request supersedes the previous task.
+          commitTask(null);
+          if (frames[0]) {
+            pendingTaskRef.current = {
+              sessionId,
+              goal: heard,
+              beforeFrame: frames[0],
+              instruction: null,
+              link: null,
+            };
+          }
           setHighlights([]);
           setHighlightLinks([]);
           setHoldUntil(null);
@@ -380,10 +679,16 @@ export default function VideoPlayer({ video, onBack }: Props) {
               if (sessionId !== sessionRef.current) return;
               setScanning(false);
               const placed = withLabelIds(normalizeLabels(raw.labels));
+              const links = normalizeLink(raw.link, placed);
               highlightHoldRef.current = placed.length > 0;
               setHighlightSeed(frames[0] ?? null);
               setHighlights(placed);
-              setHighlightLinks(normalizeLink(raw.link, placed));
+              setHighlightLinks(links);
+              const pending = pendingTaskRef.current;
+              if (links.length && pending?.sessionId === sessionId) {
+                pending.link = links;
+                sealTaskIfReady(sessionId);
+              }
             })
             .catch(() => {
               if (sessionId !== sessionRef.current) return;
@@ -391,24 +696,32 @@ export default function VideoPlayer({ video, onBack }: Props) {
             });
         }
 
-        const result = await askGrok({
-          message: heard,
-          videoTitle: video.title,
-          videoDescription: video.description,
-          currentTime,
-          duration,
-          frames,
-          lowDetail: highlight,
-          // Detector boxes ride along so Grok narrates them as authoritative;
-          // Grok-box turns get geometry from the parallel /api/labels call.
-          detections: precomputed.length ? precomputed : undefined,
-          detectorPack: video.detectorPack || "sushi",
-        });
+        const result = webSearch
+          ? await askWeb({ message: heard, videoTitle: video.title })
+          : await askGrok({
+              message: heard,
+              videoTitle: video.title,
+              videoDescription: video.description,
+              currentTime,
+              duration,
+              frames,
+              lowDetail: highlight || motionGuidance,
+              // Detector boxes ride along so Grok narrates them as authoritative;
+              // Grok-box turns get geometry from the parallel /api/labels call.
+              detections: precomputed.length ? precomputed : undefined,
+              detectorPack: video.detectorPack || "sushi",
+            });
 
         if (sessionId !== sessionRef.current) {
           setDetecting(false);
           void result.audioPromise.then((url) => URL.revokeObjectURL(url));
           return;
+        }
+
+        const pending = pendingTaskRef.current;
+        if (pending?.sessionId === sessionId) {
+          pending.instruction = result.reply;
+          sealTaskIfReady(sessionId);
         }
 
         setReply(result.reply);
@@ -429,6 +742,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
         setError(err instanceof Error ? err.message : "Voice session failed");
         setPhase("error");
         setScanning(false);
+        setGuidanceCue(null);
+        setCatalogMotion(null);
         setHighlights([]);
         setHighlightLinks([]);
         setHoldUntil(null);
@@ -449,7 +764,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
       }
     },
-    [armMicSoon, playAudioUrl, playSpoken, resumeIfAutoPaused, video.description, video.detectorPack, video.title],
+    [armMicSoon, clearHighlights, commitTask, playAudioUrl, playSpoken, resumeIfAutoPaused, sealTaskIfReady, video.description, video.detectorPack, video.id, video.title],
   );
 
   const { supported, micLive, interim, startCommand, cancelCommand } =
@@ -530,9 +845,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
+    pendingTaskRef.current = null;
+    commitTask(null);
     el.volume = WAKE_DUCK;
     void el.play().catch(() => {});
-  }, [video.src]);
+  }, [commitTask, video.src]);
 
   useEffect(() => {
     const isEditableTarget = (target: EventTarget | null) => {
@@ -587,6 +904,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     return () => {
       sessionRef.current += 1;
       audioRef.current?.pause();
+      if (clickTimerRef.current !== null) window.clearTimeout(clickTimerRef.current);
       if (videoRef.current) videoRef.current.volume = NORMAL_VOLUME;
     };
   }, []);
@@ -625,12 +943,26 @@ export default function VideoPlayer({ video, onBack }: Props) {
           src={video.src}
           playsInline
           loop
-          onClick={() => {
+          onClick={(event) => {
             const el = videoRef.current;
             if (!el) return;
-            resumeAfterTurnRef.current = false;
-            if (el.paused) void el.play();
-            else el.pause();
+            if (clickTimerRef.current !== null) {
+              // double press: skip 10s toward the tapped side
+              window.clearTimeout(clickTimerRef.current);
+              clickTimerRef.current = null;
+              const rect = el.getBoundingClientRect();
+              const forward = event.clientX - rect.left > rect.width / 2;
+              const duration = Number.isFinite(el.duration) ? el.duration : 0;
+              const next = el.currentTime + (forward ? 10 : -10);
+              el.currentTime = Math.min(Math.max(0, next), duration || Infinity);
+              return;
+            }
+            clickTimerRef.current = window.setTimeout(() => {
+              clickTimerRef.current = null;
+              resumeAfterTurnRef.current = false;
+              if (el.paused) void el.play();
+              else el.pause();
+            }, 250);
           }}
         />
         {scanning && (
@@ -639,15 +971,25 @@ export default function VideoPlayer({ video, onBack }: Props) {
           </div>
         )}
         {usedVision && voiceBusy && (
-          <div className="frame-freeze-chip" aria-hidden>
+          <div
+            className={`frame-freeze-chip ${task ? "with-task" : ""}`}
+            aria-hidden
+          >
             <span className="frame-freeze-dot" />
             Grok is watching
           </div>
+        )}
+        {task && <TaskStateChip task={task} />}
+        {guidanceCue && (
+          <GuidanceStatusChip cue={guidanceCue} authored={Boolean(catalogMotion)} />
         )}
         <VideoHighlights
           videoRef={videoRef}
           labels={highlights}
           links={highlightLinks}
+          guidanceMotion={guidanceCue?.motion ?? null}
+          catalogMotion={catalogMotion}
+          guidanceStatus={guidanceCue?.status ?? null}
           holdUntil={holdUntil}
           seedFrame={highlightSeed}
           onLabelsChange={(next) => {
@@ -661,7 +1003,23 @@ export default function VideoPlayer({ video, onBack }: Props) {
             <span>Finding it…</span>
           </div>
         )}
+        <PlayerTransport
+          videoRef={videoRef}
+          onUserControl={() => {
+            resumeAfterTurnRef.current = false;
+          }}
+        />
       </div>
+
+      {toolkit && (
+        <ToolsDropdown
+          toolkit={toolkit}
+          onClose={() => {
+            setToolkit(null);
+            toolkitRef.current = null;
+          }}
+        />
+      )}
 
       {manual && (
         <ManualOverlay
