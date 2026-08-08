@@ -1319,6 +1319,10 @@ video {
   pointer-events: auto;
 }
 
+.manual-overlay.is-pdf {
+  width: min(420px, calc(100vw - 24px));
+}
+
 .manual-overlay.dragging {
   cursor: grabbing;
   border-color: rgba(255, 255, 255, 0.24);
@@ -1431,6 +1435,39 @@ video {
 .manual-step-num {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.manual-pdf-wrap {
+  margin: 0.45rem 0 0.2rem;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: #f7f7f5;
+  cursor: default;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.manual-pdf-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: min(56vh, 480px);
+  object-fit: contain;
+}
+
+.manual-pdf-error {
+  margin: 0;
+  padding: 1rem;
+  font-size: 0.78rem;
+  color: #4a4a4a;
+  text-align: center;
+}
+
+.manual-pdf-error a {
+  color: #0b57d0;
 }
 
 .manual-hint {

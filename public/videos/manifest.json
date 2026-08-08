@@ -15,5 +15,16 @@
     "src": "/videos/tesla.mp4",
     "thumbnail": "/videos/tesla-thumb.jpg",
     "durationSeconds": 394
+  },
+  {
+    "id": "ikea",
+    "title": "IKEA Furniture",
+    "description": "Assembling an IKEA MICKE desk — one-minute clip from 1:30–2:30.",
+    "src": "/videos/ikea.mp4",
+    "thumbnail": "/videos/ikea-thumb.jpg",
+    "durationSeconds": 60,
+    "manualTopic": "IKEA MICKE desk",
+    "manualPdf": "/manuals/micke-desk.pdf",
+    "manualPdfPages": 28
   }
 ]

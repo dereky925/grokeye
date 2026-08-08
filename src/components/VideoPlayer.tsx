@@ -61,7 +61,7 @@ function looksLikeEcho(heard: string, spoken: string) {
   const raw = heard.toLowerCase();
   // Fresh user commands should never be treated as speaker bleed.
   if (
-    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|tweets|feed|elon|musk|starship|spacex|youtube|watch|skip|rewind)\b/.test(
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|tweets|feed|elon|musk|starship|spacex|youtube|watch|skip|rewind|manual|ikea|desk|flip)\b/.test(
       raw,
     )
   ) {
@@ -522,20 +522,30 @@ export default function VideoPlayer({ video, onBack }: Props) {
           if (action.type !== "move_overlay") setTools(null);
 
           if (action.type === "open_manual") {
-            const topic = action.topic || video.title || "sushi";
+            const topic =
+              action.topic || video.manualTopic || video.title || "sushi";
+            const ikeaPdf =
+              video.manualPdf ||
+              (video.id === "ikea" ? "/manuals/micke-desk.pdf" : undefined);
+            const ikeaPages =
+              video.manualPdfPages || (video.id === "ikea" ? 28 : undefined);
             const loading: ManualOverlayState = {
               doc: {
-                title: "Searching the web…",
+                title: ikeaPdf ? "Opening IKEA pamphlet…" : "Searching the web…",
                 topic,
+                mode: ikeaPdf ? "pdf" : "steps",
+                pdfUrl: ikeaPdf,
                 source: {
-                  title: "Searching",
-                  url: "https://x.ai",
-                  siteName: "searching…",
+                  title: ikeaPdf ? "IKEA" : "Searching",
+                  url: ikeaPdf || "https://x.ai",
+                  siteName: ikeaPdf ? "ikea.com" : "searching…",
                 },
                 steps: [
                   {
                     n: 1,
-                    text: "Finding a trusted source and building steps…",
+                    text: ikeaPdf
+                      ? "Loading the official assembly pamphlet…"
+                      : "Finding a trusted source and building steps…",
                   },
                 ],
               },
@@ -551,8 +561,16 @@ export default function VideoPlayer({ video, onBack }: Props) {
               topic,
               videoTitle: video.title,
               videoDescription: video.description,
+              manualPdf: ikeaPdf,
+              manualPdfPages: ikeaPages,
+              videoId: video.id,
             });
             if (sessionId !== sessionRef.current) return;
+            // Never fall back to word-summary steps when we have an official PDF.
+            if (ikeaPdf && doc.mode !== "pdf") {
+              doc.mode = "pdf";
+              doc.pdfUrl = ikeaPdf;
+            }
             const result = applyManualAction(manualRef.current, action, doc);
             setManual(result.state);
             manualRef.current = result.state;

@@ -5,6 +5,12 @@ export type VideoItem = {
   src: string;
   thumbnail: string;
   durationSeconds: number;
+  /** Optional default how-to topic when the user opens “the manual”. */
+  manualTopic?: string;
+  /** Hosted official PDF manual (preferred over generated text steps). */
+  manualPdf?: string;
+  /** Page count for `manualPdf` flip navigation. */
+  manualPdfPages?: number;
   /** Local YOLO-World pack id (see detector/packs). */
   detectorPack?: string;
   /** Feed comes from an attached camera instead of `src`. */
@@ -34,6 +40,9 @@ export type ManualDoc = {
   topic: string;
   source: ManualSource;
   steps: ManualStep[];
+  /** Official pamphlet PDF (e.g. IKEA assembly instructions). */
+  mode?: "steps" | "pdf";
+  pdfUrl?: string;
 };
 
 export type ManualOverlayState = {

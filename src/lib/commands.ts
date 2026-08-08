@@ -83,11 +83,11 @@ type SnapCommand = { intent: Exclude<ManualAction, null>; phrases: string[] };
 const COMMANDS: SnapCommand[] = [
   {
     intent: { type: "next_step" },
-    phrases: ["next step", "next", "next one", "continue", "go on", "keep going", "proceed", "forward"],
+    phrases: ["next step", "next", "next one", "continue", "go on", "keep going", "proceed", "forward", "next page", "flip", "flip page", "turn page"],
   },
   {
     intent: { type: "prev_step" },
-    phrases: ["previous step", "previous", "previous one", "back", "go back", "back up", "last step", "backward"],
+    phrases: ["previous step", "previous", "previous one", "back", "go back", "back up", "last step", "backward", "previous page", "flip back"],
   },
   {
     intent: { type: "close_manual" },
@@ -95,7 +95,20 @@ const COMMANDS: SnapCommand[] = [
   },
   {
     intent: { type: "open_manual" },
-    phrases: ["show steps", "show me the steps", "open manual", "open the manual", "show the manual", "walk me through", "guide me", "instructions"],
+    phrases: [
+      "show steps",
+      "show me the steps",
+      "open manual",
+      "open the manual",
+      "show the manual",
+      "walk me through",
+      "guide me",
+      "instructions",
+      "ikea manual",
+      "show ikea manual",
+      "desk manual",
+      "assembly guide",
+    ],
   },
 ];
 
