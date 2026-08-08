@@ -1,0 +1,362 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  onstart: (() => void) | null;
+};
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<{
+    isFinal: boolean;
+    0: { transcript: string };
+  }>;
+};
+
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
+type Mode = "idle" | "capturing" | "paused";
+
+export type VoiceListenState = {
+  supported: boolean;
+  micLive: boolean;
+  mode: Mode;
+  interim: string;
+  startCommand: () => void;
+  cancelCommand: () => void;
+};
+
+function getSpeechRecognition(): SpeechRecognitionCtor | null {
+  const w = window as Window & {
+    SpeechRecognition?: SpeechRecognitionCtor;
+    webkitSpeechRecognition?: SpeechRecognitionCtor;
+  };
+  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
+}
+
+// Optional strip if someone still says it out of habit
+const WAKE_STRIP_RE =
+  /^(?:.*?\b)?(?:hey|hi|ok|okay)[\s,.-]*(?:grok|groc|grawk|greg|brook|brock)[\s,.-]*/i;
+
+function normalize(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function cleanUtterance(text: string) {
+  return normalize(text.replace(WAKE_STRIP_RE, ""));
+}
+
+/**
+ * Always-on listener: any speech starts a request (no "Hey Grok" gate).
+ * Ends the turn after a short silence.
+ */
+export function useGrokListener(options: {
+  enabled: boolean;
+  onSpeechStart: () => void;
+  onQuestion: (text: string) => void;
+  onInterim?: (text: string) => void;
+}): VoiceListenState {
+  const { enabled, onSpeechStart, onQuestion, onInterim } = options;
+  const [supported, setSupported] = useState(true);
+  const [micLive, setMicLive] = useState(false);
+  const [mode, setMode] = useState<Mode>("paused");
+  const [interim, setInterim] = useState("");
+
+  const modeRef = useRef<Mode>("paused");
+  const onSpeechStartRef = useRef(onSpeechStart);
+  const onQuestionRef = useRef(onQuestion);
+  const onInterimRef = useRef(onInterim);
+  const bufferRef = useRef("");
+  const silenceTimerRef = useRef<number | null>(null);
+  const restartTimerRef = useRef<number | null>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const wantRunningRef = useRef(false);
+
+  useEffect(() => {
+    onSpeechStartRef.current = onSpeechStart;
+    onQuestionRef.current = onQuestion;
+    onInterimRef.current = onInterim;
+  }, [onSpeechStart, onQuestion, onInterim]);
+
+  const setModeBoth = useCallback((next: Mode) => {
+    modeRef.current = next;
+    setMode(next);
+  }, []);
+
+  const clearSilence = useCallback(() => {
+    if (silenceTimerRef.current != null) {
+      window.clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  }, []);
+
+  const finishUtterance = useCallback(() => {
+    clearSilence();
+    const text = cleanUtterance(bufferRef.current);
+    bufferRef.current = "";
+    setInterim("");
+    setModeBoth("idle");
+    if (text) onQuestionRef.current(text);
+  }, [clearSilence, setModeBoth]);
+
+  const bumpSilenceWatch = useCallback(() => {
+    clearSilence();
+    silenceTimerRef.current = window.setTimeout(() => {
+      if (
+        modeRef.current === "capturing" &&
+        cleanUtterance(bufferRef.current)
+      ) {
+        finishUtterance();
+      }
+    }, 1600);
+  }, [clearSilence, finishUtterance]);
+
+  const beginCapture = useCallback(() => {
+    if (modeRef.current === "capturing") return;
+    bufferRef.current = "";
+    setInterim("");
+    setModeBoth("capturing");
+    onSpeechStartRef.current();
+  }, [setModeBoth]);
+
+  const startCommand = useCallback(() => {
+    beginCapture();
+  }, [beginCapture]);
+
+  const cancelCommand = useCallback(() => {
+    clearSilence();
+    bufferRef.current = "";
+    setInterim("");
+    setModeBoth("idle");
+  }, [clearSilence, setModeBoth]);
+
+  useEffect(() => {
+    const Ctor = getSpeechRecognition();
+    if (!Ctor) {
+      setSupported(false);
+      return;
+    }
+
+    if (!enabled) {
+      wantRunningRef.current = false;
+      clearSilence();
+      if (restartTimerRef.current != null) {
+        window.clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = null;
+      }
+      recognitionRef.current?.abort();
+      recognitionRef.current = null;
+      setMicLive(false);
+      setModeBoth("paused");
+      return;
+    }
+
+    wantRunningRef.current = true;
+    setModeBoth("idle");
+
+    const recognition = new Ctor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognitionRef.current = recognition;
+
+    const safeStart = () => {
+      if (!wantRunningRef.current) return;
+      try {
+        recognition.start();
+      } catch {
+        /* already started */
+      }
+    };
+
+    recognition.onstart = () => setMicLive(true);
+
+    recognition.onresult = (event) => {
+      let interimChunk = "";
+      let finalChunk = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const piece = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalChunk += `${piece} `;
+        else interimChunk += piece;
+      }
+
+      const live = cleanUtterance(`${finalChunk} ${interimChunk}`);
+      if (!live && !finalChunk && !interimChunk) return;
+
+      if (modeRef.current !== "capturing") {
+        beginCapture();
+      }
+
+      if (finalChunk) {
+        bufferRef.current = cleanUtterance(
+          `${bufferRef.current} ${finalChunk}`,
+        );
+      }
+
+      const shown = cleanUtterance(`${bufferRef.current} ${interimChunk}`);
+      setInterim(shown);
+      onInterimRef.current?.(shown);
+      if (shown) bumpSilenceWatch();
+    };
+
+    recognition.onerror = (event) => {
+      const fatal =
+        event.error === "not-allowed" || event.error === "service-not-allowed";
+      if (fatal) {
+        setSupported(false);
+        wantRunningRef.current = false;
+        setMicLive(false);
+      }
+    };
+
+    recognition.onend = () => {
+      setMicLive(false);
+      if (!wantRunningRef.current) return;
+      if (
+        modeRef.current === "capturing" &&
+        cleanUtterance(bufferRef.current)
+      ) {
+        finishUtterance();
+      }
+      restartTimerRef.current = window.setTimeout(safeStart, 220);
+    };
+
+    safeStart();
+
+    return () => {
+      wantRunningRef.current = false;
+      clearSilence();
+      if (restartTimerRef.current != null) {
+        window.clearTimeout(restartTimerRef.current);
+        restartTimerRef.current = null;
+      }
+      recognition.onend = null;
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.abort();
+      recognitionRef.current = null;
+      setMicLive(false);
+      setModeBoth("paused");
+    };
+  }, [
+    enabled,
+    beginCapture,
+    bumpSilenceWatch,
+    clearSilence,
+    finishUtterance,
+    setModeBoth,
+  ]);
+
+  return {
+    supported,
+    micLive,
+    mode,
+    interim,
+    startCommand,
+    cancelCommand,
+  };
+}
+
+export function captureVideoFrames(
+  video: HTMLVideoElement,
+  priorDataUrls: string[] = [],
+): { frames: string[]; currentTime: number; duration: number } {
+  const frames = [...priorDataUrls];
+  const frame = captureFrame(video);
+  if (frame) frames.push(frame);
+  const uniq = Array.from(new Set(frames)).slice(-3);
+  return {
+    frames: uniq,
+    currentTime: video.currentTime || 0,
+    duration: Number.isFinite(video.duration) ? video.duration : 0,
+  };
+}
+
+export function captureFrame(
+  video: HTMLVideoElement,
+  opts?: { maxW?: number; quality?: number },
+): string | null {
+  if (!video.videoWidth || !video.videoHeight) return null;
+  const maxW = opts?.maxW ?? 1024;
+  const quality = opts?.quality ?? 0.72;
+  const scale = Math.min(1, maxW / video.videoWidth);
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+  canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+/** Only attach frames when the user is asking about what's on screen. */
+export function needsVideoContext(message: string): boolean {
+  const t = message.toLowerCase().replace(/[’”]/g, "'");
+
+  if (
+    /\b(look|looking|see|seeing|watch|watching|shown?|showing|visible|on\s*screen|on\s*the\s*screen|in\s*(the|this)\s*(video|clip|scene|frame|shot|image|picture)|this\s*(video|clip|scene|frame|moment|shot)|right\s*now|currently|what's\s*happening|what\s*is\s*happening|what\s*am\s*i\s*(watching|looking)|describe\s*(this|that|the\s*scene|what)|tell\s*me\s*what\s*(you\s*see|this\s*is|that\s*is|i'?m\s*seeing)|can\s*you\s*see|do\s*you\s*see|what('s|\s+is)\s*(this|that|on\s*(the\s*)?(screen|video))|who\s*(is|are)\s*(that|this|in)|what\s*(color|colour|ingredient|food|object|thing)|how\s*many|holding|wearing)\b/.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+
+  if (/\b(what|who|where)\b/.test(t) && /\b(this|that|here|there)\b/.test(t)) {
+    return true;
+  }
+
+  return false;
+}
+
+export async function askGrok(input: {
+  message: string;
+  videoTitle?: string;
+  videoDescription?: string;
+  currentTime?: number;
+  duration?: number;
+  frames?: string[];
+  wantLabels?: boolean;
+}) {
+  const chatRes = await fetch("/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const chatData = await chatRes.json();
+  if (!chatRes.ok) {
+    throw new Error(chatData.error || "Chat failed");
+  }
+
+  const reply = String(chatData.reply || "");
+  const labels = Array.isArray(chatData.labels) ? chatData.labels : [];
+
+  // Kick off TTS immediately so the client can paint labels while audio encodes.
+  const audioPromise = (async () => {
+    const ttsRes = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: reply }),
+    });
+    if (!ttsRes.ok) {
+      const err = await ttsRes.json().catch(() => ({}));
+      throw new Error(err.error || "TTS failed");
+    }
+    const blob = await ttsRes.blob();
+    return URL.createObjectURL(blob);
+  })();
+
+  return {
+    reply,
+    labels,
+    audioPromise,
+    frameCount: chatData.frameCount as number,
+  };
+}
