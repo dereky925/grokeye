@@ -12,9 +12,14 @@ type Props = {
   /** Arrows drawn between tracked labels (endpoints follow the tracker). */
   links?: HighlightLink[];
   onLabelsChange: (labels: HighlightLabel[]) => void;
-  /** Soft-expire callouts after this many ms. */
+  /**
+   * Voice-synced expiry: a performance.now() timestamp (set ~2s after TTS
+   * ends) at which callouts fade. null = fall back to maxMs only.
+   */
+  holdUntil?: number | null;
+  /** Backstop expiry (TTS failed / never fired) after this many ms. */
   maxMs?: number;
-  /** Keep boxes up at least this long even if tracking slips. */
+  /** Keep boxes up at least this long even if the voice reply is short. */
   minHoldMs?: number;
 };
 
@@ -45,17 +50,23 @@ export default function VideoHighlights({
   labels,
   links = [],
   onLabelsChange,
-  maxMs = 14000,
-  minHoldMs = 7000,
+  holdUntil = null,
+  maxMs = 12000,
+  minHoldMs = 5000,
 }: Props) {
   const [content, setContent] = useState<VideoContentRect | null>(null);
   const [leaving, setLeaving] = useState(false);
   const labelsRef = useRef(labels);
   const onChangeRef = useRef(onLabelsChange);
+  const holdUntilRef = useRef<number | null>(holdUntil);
 
   useEffect(() => {
     labelsRef.current = labels;
   }, [labels]);
+
+  useEffect(() => {
+    holdUntilRef.current = holdUntil;
+  }, [holdUntil]);
 
   useEffect(() => {
     onChangeRef.current = onLabelsChange;
@@ -101,6 +112,14 @@ export default function VideoHighlights({
       if (dead) return;
       const elapsed = performance.now() - started;
       if (elapsed > maxMs) {
+        fadeOut();
+        return;
+      }
+
+      // Voice-synced expiry: fade shortly after the spoken reply finished,
+      // but never before the minimum demo beat.
+      const hold = holdUntilRef.current;
+      if (hold != null && elapsed >= minHoldMs && performance.now() >= hold) {
         fadeOut();
         return;
       }

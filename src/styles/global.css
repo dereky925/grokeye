@@ -528,6 +528,40 @@ video {
   }
 }
 
+/* Chip shown while the frame is frozen for a visual turn — the pause is a
+   feature ("perception beat"), not a glitch. */
+.frame-freeze-chip {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 47;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(8, 8, 10, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #f4f6fa;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  animation: fade-in 0.24s ease both;
+}
+
+.frame-freeze-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #9dffb0;
+  box-shadow: 0 0 8px rgba(157, 255, 176, 0.7);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
 /* Scan sweep shown on the frozen frame while Grok locates objects. */
 .video-scan {
   position: absolute;

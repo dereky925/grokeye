@@ -43,7 +43,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sessionRef = useRef(0);
   const manualRef = useRef<ManualOverlayState | null>(null);
-  const resumeAfterHighlightRef = useRef(false);
+  const resumeAfterTurnRef = useRef(false);
+  const turnInFlightRef = useRef(false);
+  const highlightHoldRef = useRef(false);
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
   const [reply, setReply] = useState("");
@@ -54,6 +56,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [highlights, setHighlights] = useState<HighlightLabel[]>([]);
   const [highlightLinks, setHighlightLinks] = useState<HighlightLink[]>([]);
   const [scanning, setScanning] = useState(false);
+  const [holdUntil, setHoldUntil] = useState<number | null>(null);
   const voiceBusy = phase !== "idle";
 
   useEffect(() => {
@@ -67,15 +70,21 @@ export default function VideoPlayer({ video, onBack }: Props) {
     audioElement: phase === "speaking" ? ttsAudio : null,
   });
 
+  const resumeIfAutoPaused = useCallback(() => {
+    if (resumeAfterTurnRef.current) {
+      resumeAfterTurnRef.current = false;
+      void videoRef.current?.play().catch(() => {});
+    }
+  }, []);
+
   const clearHighlights = useCallback(() => {
     setHighlights([]);
     setHighlightLinks([]);
-    if (resumeAfterHighlightRef.current) {
-      resumeAfterHighlightRef.current = false;
-      const el = videoRef.current;
-      if (el) void el.play().catch(() => {});
-    }
-  }, []);
+    setHoldUntil(null);
+    highlightHoldRef.current = false;
+    // Mid-turn clears leave the frame frozen; the turn's own exit resumes it.
+    if (!turnInFlightRef.current) resumeIfAutoPaused();
+  }, [resumeIfAutoPaused]);
 
   const playSpoken = useCallback(async (text: string, sessionId: number) => {
     setReply(text);
@@ -102,6 +111,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     async (heard: string) => {
       const sessionId = ++sessionRef.current;
       const el = videoRef.current;
+      turnInFlightRef.current = true;
       setTranscript(heard);
       setError(null);
       setReply("");
@@ -114,6 +124,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
         const action = parseManualAction(heard, open);
 
         if (action) {
+          // Manual turns don't need the frozen frame — let it play under the card.
+          resumeIfAutoPaused();
           if (action.type === "open_manual") {
             const topic = action.topic || video.title || "sushi";
             const loading: ManualOverlayState = {
@@ -165,15 +177,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
         const wantFrames = highlight || needsVideoContext(heard);
         setUsedVision(wantFrames);
 
+        // Non-visual turn: the freeze-on-speech pause isn't needed after all.
+        if (!wantFrames) resumeIfAutoPaused();
+
         let frames: string[] = [];
         let currentTime = el?.currentTime || 0;
         let duration = el && Number.isFinite(el.duration) ? el.duration : 0;
 
         if (wantFrames && el) {
-          if (highlight && !el.paused) {
-            el.pause();
-            resumeAfterHighlightRef.current = true;
-          }
+          // Video froze at speech onset, so this is the frame the user reacted to.
           const frame = captureFrame(
             el,
             highlight ? { maxW: 768, quality: 0.62 } : undefined,
@@ -184,18 +196,14 @@ export default function VideoPlayer({ video, onBack }: Props) {
         if (highlight) {
           setHighlights([]);
           setHighlightLinks([]);
+          setHoldUntil(null);
+          highlightHoldRef.current = false;
         }
 
         // Boxes ride a parallel labels-only call so they paint while the
         // spoken reply is still generating.
         if (highlight && frames.length) {
           setScanning(true);
-          const resumeIfNothingPlaced = () => {
-            if (resumeAfterHighlightRef.current) {
-              resumeAfterHighlightRef.current = false;
-              void el?.play().catch(() => {});
-            }
-          };
           void fetchLabels({
             message: heard,
             frames,
@@ -205,19 +213,14 @@ export default function VideoPlayer({ video, onBack }: Props) {
               if (sessionId !== sessionRef.current) return;
               setScanning(false);
               const placed = withLabelIds(normalizeLabels(raw.labels));
+              highlightHoldRef.current = placed.length > 0;
               setHighlights(placed);
               setHighlightLinks(normalizeLink(raw.link, placed));
-              if (!placed.length) resumeIfNothingPlaced();
             })
             .catch(() => {
               if (sessionId !== sessionRef.current) return;
               setScanning(false);
-              resumeIfNothingPlaced();
             });
-        } else if (highlight && resumeAfterHighlightRef.current) {
-          // Frame capture failed — nothing to locate, keep the video moving.
-          resumeAfterHighlightRef.current = false;
-          void el?.play().catch(() => {});
         }
 
         const result = await askGrok({
@@ -255,41 +258,73 @@ export default function VideoPlayer({ video, onBack }: Props) {
           audio.play().catch(reject);
         });
         URL.revokeObjectURL(audioUrl);
+
+        // Callouts breathe ~2s past the voice, then fade and the video resumes.
+        if (highlightHoldRef.current) {
+          setHoldUntil(performance.now() + 2000);
+        }
       } catch (err) {
         if (sessionId !== sessionRef.current) return;
         setError(err instanceof Error ? err.message : "Voice session failed");
         setPhase("error");
-        if (resumeAfterHighlightRef.current) {
-          resumeAfterHighlightRef.current = false;
-          void videoRef.current?.play().catch(() => {});
-        }
+        setScanning(false);
+        setHighlights([]);
+        setHighlightLinks([]);
+        setHoldUntil(null);
+        highlightHoldRef.current = false;
+        resumeIfAutoPaused();
         await new Promise((r) => setTimeout(r, 2200));
       } finally {
         if (sessionId === sessionRef.current) {
+          turnInFlightRef.current = false;
           setPhase("idle");
           setTranscript("");
           setTtsAudio(null);
           setUsedVision(false);
           if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
+          // Placed callouts extend the freeze; clearHighlights resumes later.
+          if (!highlightHoldRef.current) resumeIfAutoPaused();
         }
       }
     },
-    [playSpoken, video.description, video.title],
+    [playSpoken, resumeIfAutoPaused, video.description, video.title],
   );
 
-  const { supported, micLive, interim, startCommand } = useGrokListener({
-    enabled: phase === "idle" || phase === "listening",
-    onSpeechStart: () => {
-      setError(null);
-      setReply("");
-      setTranscript("");
-      setPhase("listening");
-      if (videoRef.current) videoRef.current.volume = 0.02;
-    },
-    onQuestion: (text) => {
-      void handleQuestion(text);
-    },
-  });
+  const { supported, micLive, interim, startCommand, cancelCommand } =
+    useGrokListener({
+      enabled: phase === "idle" || phase === "listening",
+      onSpeechStart: () => {
+        setError(null);
+        setReply("");
+        setTranscript("");
+        setPhase("listening");
+        const el = videoRef.current;
+        if (el) {
+          // Freeze on speech onset: the captured frame is the one the user
+          // was reacting to, not one ~2s later when intent resolves.
+          if (!el.paused) {
+            el.pause();
+            resumeAfterTurnRef.current = true;
+          }
+          el.volume = 0.02;
+        }
+      },
+      onQuestion: (text) => {
+        void handleQuestion(text);
+      },
+    });
+
+  // Watchdog: a capture that never produces words (stray mic tap, noise)
+  // must not leave the video frozen. Reset the turn and resume.
+  useEffect(() => {
+    if (phase !== "listening" || transcript || interim) return;
+    const t = window.setTimeout(() => {
+      cancelCommand();
+      setPhase("idle");
+      resumeIfAutoPaused();
+    }, 8000);
+    return () => window.clearTimeout(t);
+  }, [phase, transcript, interim, cancelCommand, resumeIfAutoPaused]);
 
   useEffect(() => {
     if (phase === "listening" && interim) setTranscript(interim);
@@ -352,7 +387,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       event.preventDefault();
       const el = videoRef.current;
       if (!el) return;
-      resumeAfterHighlightRef.current = false;
+      resumeAfterTurnRef.current = false;
       if (el.paused) void el.play();
       else el.pause();
     };
@@ -405,7 +440,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           onClick={() => {
             const el = videoRef.current;
             if (!el) return;
-            resumeAfterHighlightRef.current = false;
+            resumeAfterTurnRef.current = false;
             if (el.paused) void el.play();
             else el.pause();
           }}
@@ -415,10 +450,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
             <span className="video-scan-bar" />
           </div>
         )}
+        {usedVision && voiceBusy && (
+          <div className="frame-freeze-chip" aria-hidden>
+            <span className="frame-freeze-dot" />
+            Answering from this frame
+          </div>
+        )}
         <VideoHighlights
           videoRef={videoRef}
           labels={highlights}
           links={highlightLinks}
+          holdUntil={holdUntil}
           onLabelsChange={(next) => {
             if (!next.length) clearHighlights();
             else setHighlights(next);
