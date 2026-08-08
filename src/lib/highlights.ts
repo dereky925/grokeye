@@ -12,7 +12,10 @@ export type VideoContentRect = {
 
 /** True when the utterance should place visual callouts on the frame. */
 export function wantsHighlight(message: string): boolean {
-  const t = message.toLowerCase().replace(/[’”']/g, "'");
+  const t = message
+    .toLowerCase()
+    .replace(/[’”]/g, "'")
+    .replace(/\bwhere'?s\b/g, "where is");
   if (
     /\b(highlight|circle|outline|label|mark|annotate|call\s*out)\b/.test(t)
   ) {
@@ -21,6 +24,11 @@ export function wantsHighlight(message: string): boolean {
   if (/\b(point|points|pointing)\s+(to|at|out)\b/.test(t)) return true;
   if (/\bshow\s+(me\s+)?where\b/.test(t)) return true;
   if (/\bwhere\s+(is|are)\s+(the|my|that|this)\b/.test(t)) return true;
+  // Connection/route questions → arrow between two callouts.
+  if (/\bwhere\s+do(es)?\s+(this|that|the|it|these)\b/.test(t)) return true;
+  if (/\b(connects?|plugs?\s+in|attach(es)?|goes|leads?)\s+(to|into|in)\b/.test(t)) {
+    return true;
+  }
   if (
     /\b(what('s|\s+is)\s+(this|that)|what\s+am\s+i\s+(looking|seeing)|identify|what's\s+that)\b/.test(
       t,

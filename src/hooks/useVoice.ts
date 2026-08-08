@@ -299,7 +299,10 @@ export function captureFrame(
 
 /** Only attach frames when the user is asking about what's on screen. */
 export function needsVideoContext(message: string): boolean {
-  const t = message.toLowerCase().replace(/[’”]/g, "'");
+  const t = message
+    .toLowerCase()
+    .replace(/[’”]/g, "'")
+    .replace(/\bwhere'?s\b/g, "where is");
 
   if (
     /\b(look|looking|see|seeing|watch|watching|shown?|showing|visible|on\s*screen|on\s*the\s*screen|in\s*(the|this)\s*(video|clip|scene|frame|shot|image|picture)|this\s*(video|clip|scene|frame|moment|shot)|right\s*now|currently|what's\s*happening|what\s*is\s*happening|what\s*am\s*i\s*(watching|looking)|describe\s*(this|that|the\s*scene|what)|tell\s*me\s*what\s*(you\s*see|this\s*is|that\s*is|i'?m\s*seeing)|can\s*you\s*see|do\s*you\s*see|what('s|\s+is)\s*(this|that|on\s*(the\s*)?(screen|video))|who\s*(is|are)\s*(that|this|in)|what\s*(color|colour|ingredient|food|object|thing)|how\s*many|holding|wearing)\b/.test(
