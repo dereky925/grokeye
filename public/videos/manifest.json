@@ -15,5 +15,37 @@
     "src": "/videos/pov-copper-plumbing.mp4",
     "thumbnail": "/videos/pov-copper-plumbing-thumb.jpg",
     "durationSeconds": 160
+  },
+  {
+    "id": "pov-pc-build-fail",
+    "title": "POV First PC Build (novice)",
+    "description": "Head-cam POV of a first-time PC builder mid-build: motherboard in its wrap next to loose accessory bags, an AIO liquid-cooler radiator with twin fans, a tangle of unrouted fan cables, and a bracket being fitted into the case. The builder is a novice — sloppy, ESD-risky handling and mistakes are present and uncorrected.",
+    "src": "/videos/pov-pc-build-fail.mp4",
+    "thumbnail": "/videos/pov-pc-build-fail-thumb.jpg",
+    "durationSeconds": 17
+  },
+  {
+    "id": "pov-pc-build-cpu-ram",
+    "title": "POV PC Build Guide — CPU & RAM",
+    "description": "First-person build-guide footage: unboxing an Intel Core i5-12600KF, seating the CPU in the motherboard socket, closing the retention arm, then clipping G.Skill Ripjaws V DDR4 sticks into the DIMM slots. Deliberate, correct step-by-step technique throughout.",
+    "src": "/videos/pov-pc-build-cpu-ram.mp4",
+    "thumbnail": "/videos/pov-pc-build-cpu-ram-thumb.jpg",
+    "durationSeconds": 158
+  },
+  {
+    "id": "pov-pc-build-gpu",
+    "title": "POV PC Build Guide — GPU",
+    "description": "First-person build-guide footage: unboxing an XFX Radeon graphics card, removing PCIe slot covers on a white case, seating the card in the PCIe x16 slot, and connecting the power cable. Deliberate, correct step-by-step technique.",
+    "src": "/videos/pov-pc-build-gpu.mp4",
+    "thumbnail": "/videos/pov-pc-build-gpu-thumb.jpg",
+    "durationSeconds": 125
+  },
+  {
+    "id": "pov-tuna-melt",
+    "title": "POV Tuna Melt",
+    "description": "Overhead head-cam POV of making a tuna melt in a home kitchen: opening a tuna can over a wooden cutting board, chopping celery, mixing in mayonnaise, assembling the sandwich, and frying it in a skillet on the stove.",
+    "src": "/videos/pov-tuna-melt.mp4",
+    "thumbnail": "/videos/pov-tuna-melt-thumb.jpg",
+    "durationSeconds": 117
   }
 ]
