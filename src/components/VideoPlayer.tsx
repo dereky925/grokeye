@@ -81,6 +81,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const resumeAfterTurnRef = useRef(false);
   const turnInFlightRef = useRef(false);
   const highlightHoldRef = useRef(false);
+  const speechFrameRef = useRef<string | null>(null);
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
   const [reply, setReply] = useState("");
@@ -92,6 +93,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [highlightLinks, setHighlightLinks] = useState<HighlightLink[]>([]);
   const [scanning, setScanning] = useState(false);
   const [holdUntil, setHoldUntil] = useState<number | null>(null);
+  const [highlightSeed, setHighlightSeed] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
   const voiceBusy = phase !== "idle";
 
@@ -132,8 +134,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
     setHighlightLinks([]);
     setDetecting(false);
     setHoldUntil(null);
+    setHighlightSeed(null);
     highlightHoldRef.current = false;
-    // Mid-turn clears leave the frame frozen; the turn's own exit resumes it.
     if (!turnInFlightRef.current) resumeIfAutoPaused();
   }, [resumeIfAutoPaused]);
 
@@ -305,11 +307,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
         let precomputed: Omit<HighlightLabel, "id">[] = [];
 
         if (wantFrames && el) {
-          // Video froze at speech onset, so this is the frame the user reacted to.
-          const frame = captureFrame(
-            el,
-            highlight ? { maxW: 512, quality: 0.55 } : undefined,
-          );
+          // Prefer the snapshot taken at speech onset — the frame the user
+          // reacted to — and fall back to a live grab if it's missing.
+          const frame =
+            speechFrameRef.current ??
+            captureFrame(el, highlight ? { maxW: 512, quality: 0.55 } : undefined);
           if (frame) frames = [frame];
         }
 
@@ -317,6 +319,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           setHighlights([]);
           setHighlightLinks([]);
           setHoldUntil(null);
+          setHighlightSeed(null);
           highlightHoldRef.current = false;
           setDetecting(true);
 
@@ -350,6 +353,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
                 precomputed = normalizeLabels(detectData.labels);
                 if (precomputed.length) {
                   highlightHoldRef.current = true;
+                  // Boxes were located on the speech-onset frame — seed the
+                  // tracker from it so they walk forward onto the live video.
+                  setHighlightSeed(frames[0] ?? null);
                   setHighlights(withLabelIds(precomputed));
                 }
               }
@@ -375,6 +381,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
               setScanning(false);
               const placed = withLabelIds(normalizeLabels(raw.labels));
               highlightHoldRef.current = placed.length > 0;
+              setHighlightSeed(frames[0] ?? null);
               setHighlights(placed);
               setHighlightLinks(normalizeLink(raw.link, placed));
             })
@@ -456,12 +463,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
         setPhase("listening");
         const el = videoRef.current;
         if (el) {
-          // Freeze on speech onset: the captured frame is the one the user
-          // was reacting to, not one ~2s later when intent resolves.
-          if (!el.paused) {
-            el.pause();
-            resumeAfterTurnRef.current = true;
-          }
+          // Real-time mode: never pause. Snapshot the frame at speech onset —
+          // it's the moment the user reacted to — and keep playback rolling.
+          speechFrameRef.current = captureFrame(el, {
+            maxW: 768,
+            quality: 0.62,
+          });
           el.volume = 0.02;
         }
       },
@@ -634,7 +641,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         {usedVision && voiceBusy && (
           <div className="frame-freeze-chip" aria-hidden>
             <span className="frame-freeze-dot" />
-            Answering from this frame
+            Grok is watching
           </div>
         )}
         <VideoHighlights
@@ -642,6 +649,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           labels={highlights}
           links={highlightLinks}
           holdUntil={holdUntil}
+          seedFrame={highlightSeed}
           onLabelsChange={(next) => {
             if (!next.length) clearHighlights();
             else setHighlights(next);

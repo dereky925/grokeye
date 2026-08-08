@@ -558,6 +558,10 @@ export type HighlightTracker = {
 export function createHighlightTracker(
   video: HTMLVideoElement,
   labels: HighlightLabel[],
+  // The frame the boxes were located on (e.g. the speech-onset capture).
+  // Seeding templates from it means boxes placed a second or two late still
+  // lock onto the right object and walk forward onto the live video.
+  seedImage?: CanvasImageSource | null,
 ): HighlightTracker | null {
   if (!labels.length || !video.videoWidth) return null;
 
@@ -569,7 +573,7 @@ export function createHighlightTracker(
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) return null;
 
-  ctx.drawImage(video, 0, 0, gw, gh);
+  ctx.drawImage(seedImage ?? video, 0, 0, gw, gh);
   const seed = ctx.getImageData(0, 0, gw, gh);
   const gray0 = luma(seed.data, gw, gh);
   const edge0 = sobelMag(gray0, gw, gh);

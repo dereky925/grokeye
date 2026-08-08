@@ -17,6 +17,12 @@ type Props = {
    * ends) at which callouts fade. null = fall back to maxMs only.
    */
   holdUntil?: number | null;
+  /**
+   * Data URL of the frame the boxes were located on. The tracker seeds its
+   * templates from it (instead of the live video) so late-arriving boxes
+   * lock onto the right object and walk forward onto the moving picture.
+   */
+  seedFrame?: string | null;
   /** Backstop expiry (TTS failed / never fired) after this many ms. */
   maxMs?: number;
   /** Keep boxes up at least this long even if the voice reply is short. */
@@ -51,6 +57,7 @@ export default function VideoHighlights({
   links = [],
   onLabelsChange,
   holdUntil = null,
+  seedFrame = null,
   maxMs = 12000,
   minHoldMs = 5000,
 }: Props) {
@@ -94,8 +101,7 @@ export default function VideoHighlights({
     if (!video || !labels.length) return;
 
     setLeaving(false);
-    const tracker = createHighlightTracker(video, labels);
-    if (!tracker) return;
+    let tracker: ReturnType<typeof createHighlightTracker> = null;
 
     let dead = false;
     let raf = 0;
@@ -124,7 +130,7 @@ export default function VideoHighlights({
         return;
       }
 
-      const next = tracker.update(video);
+      const next = tracker ? tracker.update(video) : labelsRef.current;
       // Ignore early track losses — keep the model box up for the demo beat.
       if (!next && elapsed >= minHoldMs) {
         fadeOut();
@@ -169,11 +175,26 @@ export default function VideoHighlights({
       }
     };
 
+    // Seed the tracker from the frame the boxes were computed on when we have
+    // it; fall back to the live frame. Ticking starts immediately either way
+    // so expiry timers run even while the seed image decodes.
+    const begin = (img: CanvasImageSource | null) => {
+      if (dead) return;
+      tracker = createHighlightTracker(video, labels, img);
+    };
+    if (seedFrame) {
+      const img = new Image();
+      img.onload = () => begin(img);
+      img.onerror = () => begin(null);
+      img.src = seedFrame;
+    } else {
+      begin(null);
+    }
     tick();
 
     return () => {
       dead = true;
-      tracker.dispose();
+      tracker?.dispose();
       const cancel = (
         video as HTMLVideoElement & {
           cancelVideoFrameCallback?: (id: number) => void;
