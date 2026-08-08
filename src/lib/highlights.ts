@@ -23,7 +23,15 @@ export function wantsHighlight(message: string): boolean {
   }
   if (/\b(point|points|pointing)\s+(to|at|out)\b/.test(t)) return true;
   if (/\bshow\s+(me\s+)?where\b/.test(t)) return true;
-  if (/\bwhere\s+(is|are)\s+(the|my|that|this)\b/.test(t)) return true;
+  // "where is rice" (STT drops articles), "tell me where the rice is",
+  // "where would the rice be" — a location verb within a few words of "where".
+  if (/\bwhere\b(?:\s+\w+){0,4}\s+(?:is|are|was|were|be|at|go(?:es)?|went)\b/.test(t)) {
+    return true;
+  }
+  if (/\b(find|locate|spot)\s+(the|my|that|this|those|these)\b/.test(t)) {
+    return true;
+  }
+  if (/\bwhich\s+(one|thing)\b/.test(t)) return true;
   // Connection/route questions → arrow between two callouts.
   if (/\bwhere\s+do(es)?\s+(this|that|the|it|these)\b/.test(t)) return true;
   if (/\b(connects?|plugs?\s+in|attach(es)?|goes|leads?)\s+(to|into|in)\b/.test(t)) {
