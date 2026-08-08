@@ -3,4 +3,11 @@ dist
 .env
 .DS_Store
 *.log
+*.tsbuildinfo
 .vite
+
+
+.context
+
+AGENTS.md
+CLAUDE.md
