@@ -107,9 +107,62 @@ export function useTwitterFeed() {
     setLoading(true);
     setError(null);
     try {
+      // Prefer official SpaceX YouTube webcast, then X native video.
+      const yt = await fetch("/api/youtube/starship");
+      const ytData = await yt.json().catch(() => ({}));
+      if (yt.ok && ytData.video?.id) {
+        const v = ytData.video;
+        const asTweet: TwitterTweet = {
+          id: v.id,
+          text: v.title,
+          createdAt: v.publishedAt || null,
+          url: v.url,
+          author: {
+            id: "youtube-spacex",
+            name: "SpaceX",
+            username: "SpaceX",
+            avatar: v.thumbnail,
+          },
+          media: [
+            {
+              key: v.id,
+              type: "video",
+              url: null,
+              preview: v.thumbnail,
+              videoUrl: null,
+            },
+          ],
+          video: null,
+          youtubeId: v.id,
+          streamUrl: v.embedUrl,
+        };
+        const list = (ytData.videos || [v]).map((item: any) => ({
+          id: item.id,
+          text: item.title,
+          createdAt: item.publishedAt || null,
+          url: item.url,
+          author: asTweet.author,
+          media: [],
+          video: null,
+          youtubeId: item.id,
+          streamUrl: item.embedUrl,
+        }));
+        setTweets(list);
+        setUser(asTweet.author);
+        setIndex(0);
+        setPlaying(asTweet);
+        setMode("video");
+        setQueryLabel("SpaceX YouTube");
+        return asTweet;
+      }
+
       const r = await fetch("/api/twitter/starship");
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || "No Starship video found");
+      if (!r.ok) {
+        throw new Error(
+          ytData.error || data.error || "No Starship webcast found on YouTube or X",
+        );
+      }
       const tweet = data.tweet as TwitterTweet;
       const list = (data.tweets as TwitterTweet[]) || [tweet];
       setTweets(list);
