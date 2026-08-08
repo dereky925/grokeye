@@ -55,7 +55,7 @@ function looksLikeEcho(heard: string, spoken: string) {
   const raw = heard.toLowerCase();
   // Fresh user commands should never be treated as speaker bleed.
   if (
-    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|tweets|feed|elon|musk|starship|spacex|youtube)\b/.test(
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|tweets|feed|elon|musk|starship|spacex|youtube|watch|skip|rewind)\b/.test(
       raw,
     )
   ) {
@@ -107,6 +107,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const twitterOpenRef = useRef(false);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const youtubeOpenRef = useRef(false);
+  const [youtubeSeek, setYoutubeSeek] = useState<{
+    seq: number;
+    seconds: number;
+  } | null>(null);
   const voiceBusy = phase !== "idle";
   const spotify = useSpotifyPlayer();
   const twitter = useTwitterFeed();
@@ -276,6 +280,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
           setYoutubeOpen(true);
           youtubeOpenRef.current = true;
           youtube.previous();
+          return;
+        }
+        if (youtubeAction?.type === "seek") {
+          if (!youtubeOpenRef.current || !youtube.current) {
+            setError("Open a YouTube video first, then say “skip 30 seconds”.");
+            return;
+          }
+          setYoutubeSeek((prev) => ({
+            seq: (prev?.seq || 0) + 1,
+            seconds: youtubeAction.seconds,
+          }));
           return;
         }
 
@@ -881,6 +896,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           current={youtube.current}
           index={youtube.index}
           total={youtube.videos.length}
+          seekRequest={youtubeSeek}
         />
       </div>
 

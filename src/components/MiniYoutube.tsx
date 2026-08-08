@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { buildYoutubeEmbedUrl, type YoutubeVideo } from "../lib/youtube";
+
+export type YoutubeSeekRequest = {
+  seq: number;
+  seconds: number;
+};
 
 type Props = {
   open: boolean;
@@ -10,7 +15,19 @@ type Props = {
   current: YoutubeVideo | null;
   index: number;
   total: number;
+  seekRequest?: YoutubeSeekRequest | null;
 };
+
+function ytCommand(
+  win: Window | null | undefined,
+  func: string,
+  args: unknown[] = [],
+) {
+  win?.postMessage(
+    JSON.stringify({ event: "command", func, args }),
+    "*",
+  );
+}
 
 export default function MiniYoutube({
   open,
@@ -21,18 +38,16 @@ export default function MiniYoutube({
   current,
   index,
   total,
+  seekRequest = null,
 }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const timeRef = useRef(0);
-  const [hover, setHover] = useState(false);
-  const [tick, setTick] = useState(0); // bump to remount iframe on hover edge
 
   useEffect(() => {
     timeRef.current = 0;
-    setHover(false);
-    setTick(0);
   }, [current?.id]);
 
+  // Track playback time for seek + resume.
   useEffect(() => {
     if (!open || !current) return;
 
@@ -54,31 +69,30 @@ export default function MiniYoutube({
 
     window.addEventListener("message", onMessage);
     const poll = window.setInterval(() => {
-      iframeRef.current?.contentWindow?.postMessage(
-        JSON.stringify({
-          event: "command",
-          func: "getCurrentTime",
-          args: [],
-        }),
-        "*",
-      );
-    }, 700);
+      const win = iframeRef.current?.contentWindow;
+      ytCommand(win, "getCurrentTime", []);
+    }, 500);
 
     return () => {
       window.removeEventListener("message", onMessage);
       window.clearInterval(poll);
     };
-  }, [open, current?.id, tick]);
+  }, [open, current?.id]);
+
+  // Voice seek: skip ±N seconds without remounting the iframe.
+  useEffect(() => {
+    if (!seekRequest || !open || !current) return;
+    const win = iframeRef.current?.contentWindow;
+    const next = Math.max(0, timeRef.current + seekRequest.seconds);
+    timeRef.current = next;
+    ytCommand(win, "seekTo", [next, true]);
+    ytCommand(win, "playVideo", []);
+  }, [seekRequest?.seq, open, current?.id]);
 
   if (!open) return null;
 
-  const start = Math.max(0, Math.floor(timeRef.current));
   const embedSrc = current
-    ? buildYoutubeEmbedUrl(current.id, {
-        controls: hover,
-        autoplay: true,
-        start: start > 0 ? start : undefined,
-      })
+    ? buildYoutubeEmbedUrl(current.id, { controls: false, autoplay: true })
     : "";
 
   return (
@@ -112,27 +126,14 @@ export default function MiniYoutube({
       {!current && !loading ? (
         <div className="mini-youtube-panel">
           <p className="mini-youtube-msg">
-            Try “youtube lo-fi beats”, “play cats on youtube”, or “play last
-            Starship launch”.
+            Try “youtube lo-fi beats”, “watch MrBeast”, or “skip 30 seconds”.
           </p>
         </div>
       ) : current ? (
         <div className="mini-youtube-body">
-          <div
-            className="mini-youtube-frame-wrap"
-            onMouseEnter={() => {
-              if (hover) return;
-              setHover(true);
-              setTick((n) => n + 1);
-            }}
-            onMouseLeave={() => {
-              if (!hover) return;
-              setHover(false);
-              setTick((n) => n + 1);
-            }}
-          >
+          <div className="mini-youtube-frame-wrap">
             <iframe
-              key={`${current.id}-${tick}`}
+              key={current.id}
               ref={iframeRef}
               className="mini-youtube-frame"
               src={embedSrc}
