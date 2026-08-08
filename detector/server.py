@@ -231,7 +231,9 @@ def filter_labels_for_query(labels: list[dict], query: str | None) -> list[dict]
             focused.append(lab)
         elif "hand" in keys and text == "person":
             focused.append({**lab, "text": "hand"})
-    return focused or labels
+    # No query-relevant match → return nothing so the caller falls through to
+    # Grok instead of painting an unrelated detection (e.g. "person" for "gpu").
+    return focused
 
 
 def class_indices(model: Any, names: list[str]) -> list[int] | None:
