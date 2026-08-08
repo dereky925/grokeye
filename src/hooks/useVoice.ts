@@ -316,7 +316,104 @@ export function needsVideoContext(message: string): boolean {
     return true;
   }
 
+  // Hands-on guidance often arrives as an action question rather than an
+  // explicit "what do you see?" request. A deictic subject means the worker is
+  // referring to the thing in the current view, so attach the speech-onset
+  // frame for both the instruction and the visible-result check.
+  const refersToVisibleSubject = /\b(this|that|it|these|those)\b/.test(t);
+  if (
+    refersToVisibleSubject &&
+    (/\bhow\s+(?:(?:do|should|can|would)\s+i|to)\b/.test(t) ||
+      /\b(?:did|have)\s+i\b/.test(t) ||
+      /\b(?:is|are|does|do)\s+(?:this|that|it|these|those)\b/.test(t))
+  ) {
+    return true;
+  }
+
   return false;
+}
+
+/**
+ * Questions that need fresh web facts rather than the frame — routed to
+ * /api/websearch (Grok web_search tool, cached server-side + localStorage).
+ * Deliberately conservative: explicit search verbs, or a freshness cue paired
+ * with a live-fact topic, so screen questions keep going to /api/chat.
+ */
+export function needsWebSearch(message: string): boolean {
+  const t = message.toLowerCase().replace(/[’”]/g, "'");
+
+  if (
+    /\b(search\s+(the\s+)?(web|internet|online)|search\s+for|look\s+(that|this|it)?\s*up|google)\b/.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+
+  if (/\b(what'?s|how'?s)\s+the\s+weather\b/.test(t) || /\bwho\s+won\b/.test(t)) {
+    return true;
+  }
+
+  return (
+    /\b(latest|newest|current|today'?s?|this\s+(week|month|year)|recent)\b/.test(t) &&
+    /\b(price|prices|cost|news|version|release|score|weather|stock|update|deal|deals)\b/.test(
+      t,
+    )
+  );
+}
+
+const WEB_ANSWER_TTL_MS = 10 * 60 * 1000;
+
+/** Web-grounded ask; answers cache in localStorage so repeats skip the search. */
+export async function askWeb(input: { message: string; videoTitle?: string }) {
+  const cacheKey = `grokeye-web:${input.message.toLowerCase().replace(/\s+/g, " ")}`;
+
+  let reply = "";
+  try {
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      const parsed = JSON.parse(cached) as { reply: string; at: number };
+      if (parsed?.reply && Date.now() - parsed.at < WEB_ANSWER_TTL_MS) {
+        reply = parsed.reply;
+      }
+    }
+  } catch {
+    /* ignore bad cache */
+  }
+
+  if (!reply) {
+    const res = await fetch("/api/websearch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Web search failed");
+    }
+    reply = String(data.reply || "");
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify({ reply, at: Date.now() }));
+    } catch {
+      /* quota / private mode */
+    }
+  }
+
+  const audioPromise = (async () => {
+    const ttsRes = await fetch("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: reply }),
+    });
+    if (!ttsRes.ok) {
+      const err = await ttsRes.json().catch(() => ({}));
+      throw new Error(err.error || "TTS failed");
+    }
+    const blob = await ttsRes.blob();
+    return URL.createObjectURL(blob);
+  })();
+
+  return { reply, labels: [], audioPromise, frameCount: 0 };
 }
 
 /** Labels-only sidecar for highlight turns; raw boxes + link, no reply, no TTS. */

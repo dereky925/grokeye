@@ -613,6 +613,85 @@ app.post("/api/manual", async (req, res) => {
   }
 });
 
+/** Web-answer cache so a repeated question skips the search round-trip. */
+const webCache = new Map();
+const webInflight = new Map();
+const WEB_CACHE_TTL_MS = 10 * 60 * 1000;
+
+app.post("/api/websearch", async (req, res) => {
+  try {
+    const message = String(req.body?.message || "").trim();
+    const videoTitle = String(req.body?.videoTitle || "").trim();
+    if (!message) {
+      return res.status(400).json({ error: "message is required" });
+    }
+
+    const cacheKey = message.toLowerCase().replace(/\s+/g, " ");
+    const hit = webCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < WEB_CACHE_TTL_MS) {
+      return res.json({ reply: hit.reply, cached: true });
+    }
+
+    // Reuse in-flight request so double-asks don't double-pay latency
+    if (webInflight.has(cacheKey)) {
+      const reply = await webInflight.get(cacheKey);
+      return res.json({ reply, cached: true });
+    }
+
+    const system = [
+      "You are Grok, built by xAI. Your reply is spoken aloud — plain spoken prose only. Never use markdown, lists, or emoji.",
+      "Answer in 1–2 short sentences. Lead with the answer itself; no preamble, no filler.",
+      "Use web search to ground the answer in current facts. Name the source site in passing only when it adds trust.",
+      videoTitle ? `The user is watching a video titled "${videoTitle}".` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    const job = (async () => {
+      const response = await fetch("https://api.x.ai/v1/responses", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "grok-4.5",
+          tools: [{ type: "web_search" }],
+          temperature: 0.2,
+          input: [
+            { role: "system", content: system },
+            { role: "user", content: message },
+          ],
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        console.error("Websearch error:", data);
+        throw new Error(data?.error || data?.message || "Web search failed");
+      }
+
+      const reply = stripSpokenMarkdown(extractResponseText(data));
+      if (!reply) throw new Error("Empty web answer");
+      webCache.set(cacheKey, { reply, at: Date.now() });
+      return reply;
+    })();
+
+    webInflight.set(cacheKey, job);
+    try {
+      const reply = await job;
+      res.json({ reply, cached: false });
+    } finally {
+      webInflight.delete(cacheKey);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Web search failed",
+    });
+  }
+});
+
 app.use(express.static(path.join(root, "public")));
 
 if (isProd) {
