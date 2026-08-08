@@ -9,6 +9,8 @@
     "dev:server": "node --watch server/index.js",
     "dev:detect": "detector/.venv/bin/python detector/server.py",
     "detect:setup": "python3 -m venv detector/.venv && detector/.venv/bin/pip install -r detector/requirements.txt",
+    "test": "npm run test:intents",
+    "test:intents": "node --test tests/intent-routing.test.mjs",
     "build": "tsc -b && vite build",
     "start": "NODE_ENV=production node server/index.js",
     "preview": "vite preview"
