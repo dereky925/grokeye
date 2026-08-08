@@ -293,6 +293,197 @@ video {
   border-color: rgba(190, 175, 255, 0.45);
 }
 
+.mini-spotify {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 55;
+  width: min(320px, calc(100% - 2rem));
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  /* Slightly see-through shell — Spotify’s iframe stays opaque. */
+  background: rgba(10, 10, 12, 0.52);
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  animation: interrupt-in 0.24s ease both;
+}
+
+.mini-spotify-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  padding: 0.7rem 0.75rem 0.55rem;
+  border-bottom: none;
+  background: transparent;
+}
+
+.mini-spotify-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.mini-spotify-logo {
+  display: grid;
+  place-items: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 50%;
+  color: #0b0b0c;
+  background: #1ed760;
+  flex-shrink: 0;
+}
+
+.mini-spotify-copy {
+  min-width: 0;
+}
+
+.mini-spotify-title {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-spotify-sub {
+  margin: 0.12rem 0 0;
+  font-size: 0.66rem;
+  color: rgba(255, 255, 255, 0.52);
+}
+
+.mini-spotify-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.mini-spotify-open,
+.mini-spotify-close {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.88);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.4rem 0.58rem;
+  text-decoration: none;
+}
+
+.mini-spotify-open:hover,
+.mini-spotify-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.mini-spotify-panel {
+  padding: 0.35rem 0.85rem 0.9rem;
+}
+
+.mini-spotify-msg {
+  margin: 0 0 0.7rem;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.mini-spotify-msg code {
+  font-size: 0.7rem;
+  color: rgba(200, 255, 220, 0.9);
+}
+
+.mini-spotify-cta {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.55rem 0.95rem;
+  background: #1ed760;
+  color: #0b0b0c;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.mini-spotify-cta:hover {
+  filter: brightness(1.06);
+}
+
+.mini-spotify-now {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.15rem 0.85rem 0.9rem;
+}
+
+.mini-spotify-art {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mini-spotify-art.placeholder {
+  background: linear-gradient(135deg, rgba(30, 215, 96, 0.25), rgba(255, 255, 255, 0.06));
+}
+
+.mini-spotify-meta {
+  min-width: 0;
+}
+
+.mini-spotify-track {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-spotify-artist {
+  margin: 0.18rem 0 0;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.58);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mini-spotify-state {
+  margin: 0.28rem 0 0;
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(30, 215, 96, 0.9);
+}
+
+.mini-spotify-error {
+  margin: 0 0.85rem 0.75rem;
+  font-size: 0.7rem;
+  color: #ff8f8f;
+}
+
+@media (max-width: 640px) {
+  .mini-spotify {
+    left: 0.65rem;
+    right: 0.65rem;
+    width: auto;
+    bottom: 0.65rem;
+  }
+
+  .player-title {
+    display: none;
+  }
+}
+
 .interrupt-btn {
   position: absolute;
   right: 1rem;
@@ -480,6 +671,10 @@ video {
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
   pointer-events: none;
   animation: detect-status-in 0.28s ease both;
+}
+
+.player-video-wrap:has(.mini-spotify) .detect-status {
+  bottom: 15.5rem;
 }
 
 .detect-status-spinner {

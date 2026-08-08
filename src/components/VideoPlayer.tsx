@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import VoiceBubble from "./VoiceBubble";
+import MiniSpotify from "./MiniSpotify";
 import ManualOverlay from "./ManualOverlay";
 import VideoHighlights from "./VideoHighlights";
 import {
@@ -9,6 +10,7 @@ import {
   useGrokListener,
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
+import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
 import {
   normalizeLabels,
   wantsHighlight,
@@ -21,6 +23,7 @@ import {
   parseManualAction,
   speakText,
 } from "../lib/manual";
+import { parseSpotifyAction } from "../lib/spotify";
 import type {
   HighlightLabel,
   ManualOverlayState,
@@ -41,7 +44,7 @@ function looksLikeEcho(heard: string, spoken: string) {
   const raw = heard.toLowerCase();
   // Fresh user commands should never be treated as speaker bleed.
   if (
-    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop)\b/.test(
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause)\b/.test(
       raw,
     )
   ) {
@@ -85,7 +88,14 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [manual, setManual] = useState<ManualOverlayState | null>(null);
   const [highlights, setHighlights] = useState<HighlightLabel[]>([]);
   const [detecting, setDetecting] = useState(false);
+  const [spotifyOpen, setSpotifyOpen] = useState(false);
+  const spotifyOpenRef = useRef(false);
   const voiceBusy = phase !== "idle";
+  const spotify = useSpotifyPlayer();
+
+  useEffect(() => {
+    spotifyOpenRef.current = spotifyOpen;
+  }, [spotifyOpen]);
 
   useEffect(() => {
     manualRef.current = manual;
@@ -216,6 +226,55 @@ export default function VideoPlayer({ video, onBack }: Props) {
       setPhase("thinking");
 
       try {
+        const spotifyAction = parseSpotifyAction(heard, spotifyOpenRef.current);
+        if (spotifyAction?.type === "open_spotify" || spotifyAction?.type === "nudge_play") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          // Don't block the voice loop — otherwise UI sticks on Thinking.
+          void spotify.playBowie().catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Spotify is not ready yet";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "play_query") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          void spotify.playQuery(spotifyAction.query).catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Could not play that";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "next_track") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          void spotify.nextTrack().catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Could not skip track";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "previous_track") {
+          setSpotifyOpen(true);
+          spotifyOpenRef.current = true;
+          void spotify.previousTrack().catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Could not go to previous";
+            setError(msg);
+          });
+          return;
+        }
+        if (spotifyAction?.type === "close_spotify") {
+          void spotify.pause().catch(() => {});
+          setSpotifyOpen(false);
+          spotifyOpenRef.current = false;
+          return;
+        }
+
         const open = Boolean(manualRef.current);
         const action = parseManualAction(heard, open);
 
@@ -388,7 +447,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
       }
     },
-    [armMicSoon, playAudioUrl, playSpoken, video.description, video.detectorPack, video.title],
+    [armMicSoon, playAudioUrl, playSpoken, spotify, video.description, video.detectorPack, video.title],
   );
 
   const { supported, micLive, interim, startCommand } = useGrokListener({
@@ -438,10 +497,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    if (phase === "idle") el.volume = WAKE_DUCK;
-    if (phase === "speaking") el.volume = 0.08;
+    if (phase === "idle") el.volume = spotifyOpen ? 0.02 : WAKE_DUCK;
+    if (phase === "speaking") el.volume = 0.05;
     if (phase === "listening") el.volume = 0.02;
-  }, [phase]);
+  }, [phase, spotifyOpen]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -563,6 +622,20 @@ export default function VideoPlayer({ video, onBack }: Props) {
             <span>Finding it…</span>
           </div>
         )}
+        <MiniSpotify
+          open={spotifyOpen}
+          onClose={() => setSpotifyOpen(false)}
+          configured={spotify.configured}
+          authenticated={spotify.authenticated}
+          activated={spotify.activated}
+          isPlaying={spotify.isPlaying}
+          track={spotify.track}
+          error={spotify.error}
+          onLogin={spotify.login}
+          onEnable={() => {
+            void spotify.enablePlayback().catch(() => {});
+          }}
+        />
       </div>
 
       {manual && (

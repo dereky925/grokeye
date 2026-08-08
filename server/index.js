@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
+import { mountSpotifyRoutes, spotifyConfigured } from "./spotify.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,8 +21,9 @@ if (!apiKey) {
 }
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "12mb" }));
+mountSpotifyRoutes(app);
 
 const manifestPath = path.join(root, "public", "videos", "manifest.json");
 const detectBase = process.env.DETECT_URL || "http://127.0.0.1:8790";
@@ -62,7 +64,12 @@ app.get("/api/health", async (_req, res) => {
   } catch {
     detector = { ok: false, error: "unreachable" };
   }
-  res.json({ ok: true, voice: "carina", detector });
+  res.json({
+    ok: true,
+    voice: "carina",
+    detector,
+    spotify: { configured: spotifyConfigured() },
+  });
 });
 
 app.post("/api/detect", async (req, res) => {
