@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useDraggablePanel } from "../hooks/useDraggablePanel";
+import { getPdfDocument } from "../lib/pdfPage";
 import type { ManualOverlayState } from "../types";
 
 type Props = {
@@ -7,32 +8,6 @@ type Props = {
   onChangePosition: (x: number, y: number) => void;
   onClose: () => void;
 };
-
-let pdfjsPromise: Promise<typeof import("pdfjs-dist")> | null = null;
-// Cache the loaded PDF so page flips don't re-download.
-const pdfDocCache = new Map<string, import("pdfjs-dist").PDFDocumentProxy>();
-
-async function loadPdfjs() {
-  if (!pdfjsPromise) {
-    pdfjsPromise = import("pdfjs-dist").then((pdfjs) => {
-      pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-        "pdfjs-dist/build/pdf.worker.min.mjs",
-        import.meta.url,
-      ).toString();
-      return pdfjs;
-    });
-  }
-  return pdfjsPromise;
-}
-
-async function getPdf(url: string) {
-  const cached = pdfDocCache.get(url);
-  if (cached) return cached;
-  const pdfjs = await loadPdfjs();
-  const pdf = await pdfjs.getDocument(url).promise;
-  pdfDocCache.set(url, pdf);
-  return pdf;
-}
 
 export default function ManualOverlay({
   manual,
@@ -63,13 +38,12 @@ export default function ManualOverlay({
       try {
         setPageRendering(true);
         setPdfError(null);
-        const pdf = await getPdf(manual.doc.pdfUrl!);
+        const pdf = await getPdfDocument(manual.doc.pdfUrl!);
         if (cancelled) return;
         const pageNum = Math.min(Math.max(1, current), pdf.numPages);
         const page = await pdf.getPage(pageNum);
         if (cancelled) return;
 
-        // Canvas mounts after loading ends — wait a frame if needed.
         let canvas = canvasRef.current;
         if (!canvas) {
           await new Promise((r) => requestAnimationFrame(() => r(null)));

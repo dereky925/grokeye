@@ -7,13 +7,6 @@ type Props = {
   onSelect: (video: VideoItem) => void;
 };
 
-function formatDuration(seconds: number) {
-  if (!seconds) return "";
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
 export default function Dashboard({
   videos,
   loading,
@@ -34,21 +27,27 @@ export default function Dashboard({
             <button
               key={video.id}
               type="button"
-              className={`video-card ${video.live ? "live" : ""}`}
+              className={`video-card ${video.live ? "live" : ""} ${video.mode === "flip" ? "coach" : ""}`}
               style={{ animationDelay: `${index * 60}ms` }}
               onClick={() => onSelect(video)}
             >
               <div className="video-thumb">
                 {video.live ? (
                   <div className="live-thumb" aria-hidden>
-                    <span className="live-thumb-icon" />
+                    <span
+                      className={
+                        video.mode === "flip"
+                          ? "flip-thumb-icon"
+                          : "live-thumb-icon"
+                      }
+                    />
                   </div>
                 ) : (
                   <img src={video.thumbnail} alt="" />
                 )}
-                <span className={`video-duration ${video.live ? "live" : ""}`}>
-                  {video.live ? "LIVE" : formatDuration(video.durationSeconds)}
-                </span>
+                {video.live && (
+                  <span className="video-duration live">LIVE</span>
+                )}
               </div>
               <div className="video-meta">
                 <h2>{video.title}</h2>

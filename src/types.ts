@@ -15,6 +15,11 @@ export type VideoItem = {
   detectorPack?: string;
   /** Feed comes from an attached camera instead of `src`. */
   live?: boolean;
+  /**
+   * Opt into a specialized coaching flow. "flip" keeps a rolling frame buffer
+   * so Grok can review an attempt that already finished.
+   */
+  mode?: "flip";
 };
 
 export type VoicePhase =
@@ -196,4 +201,32 @@ export type GhostState = {
   /** Cropped object pixels; empty when the crop was not possible. */
   spriteUrl: string;
   loading: boolean;
+};
+
+/** One physical reason an attempt turned out the way it did. */
+export type FlipFactor = {
+  label: string;
+  detail: string;
+};
+
+export type FlipReview = {
+  /** null when the frames don't show the landing. */
+  landed: boolean | null;
+  /** Short headline, e.g. "Under-rotated — landed on its side". */
+  outcome: string;
+  /** What the frames show about rotation, release, and water movement. */
+  factors: FlipFactor[];
+  /** Corrective cues, most important first. */
+  fixes: string[];
+  /** One or two sentences worth speaking aloud. */
+  spoken: string;
+};
+
+export type FlipReviewState = {
+  review: FlipReview | null;
+  /** Thumbnails of the attempt being reviewed, oldest first. */
+  strip: string[];
+  loading: boolean;
+  x: number;
+  y: number;
 };
