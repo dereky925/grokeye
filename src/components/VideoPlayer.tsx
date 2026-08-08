@@ -28,6 +28,7 @@ import { detectColorTargets } from "../lib/colorDetect";
 import {
   applyManualAction,
   fetchManual,
+  identifyTopicFromFrame,
   parseManualAction,
   snapPosition,
   speakText,
@@ -522,11 +523,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
           if (action.type !== "move_overlay") setTools(null);
 
           if (action.type === "open_manual") {
-            const topic = action.topic || video.title || "sushi";
             const loading: ManualOverlayState = {
               doc: {
                 title: "Searching the web…",
-                topic,
+                topic: action.topic || heard,
                 source: {
                   title: "Searching",
                   url: "https://x.ai",
@@ -547,10 +547,23 @@ export default function VideoPlayer({ video, onBack }: Props) {
             setManual(loading);
             manualRef.current = loading;
 
+            // A live feed has no meaningful title, so never let it stand in as
+            // the topic — that's how "open this water bottle" turned into a
+            // guide for using the camera. Ask Grok to name what it sees instead.
+            let topic = action.topic;
+            if (!topic && live && el) {
+              const frame = captureFrame(el, { maxW: 1024, quality: 0.8 });
+              topic = frame
+                ? await identifyTopicFromFrame(frame, heard)
+                : undefined;
+              if (sessionId !== sessionRef.current) return;
+            }
+            if (!topic) topic = live ? heard : video.title || "sushi";
+
             const doc = await fetchManual({
               topic,
-              videoTitle: video.title,
-              videoDescription: video.description,
+              videoTitle: live ? undefined : video.title,
+              videoDescription: live ? undefined : video.description,
             });
             if (sessionId !== sessionRef.current) return;
             const result = applyManualAction(manualRef.current, action, doc);

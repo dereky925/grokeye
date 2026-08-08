@@ -365,6 +365,11 @@ function parseManualJson(raw) {
   return JSON.parse(candidate.slice(start, end + 1));
 }
 
+// Step count tracks task complexity; these are the outer bounds the overlay
+// and the model prompt both agree on.
+const MIN_MANUAL_STEPS = 2;
+const MAX_MANUAL_STEPS = 10;
+
 function normalizeManual(parsed, fallbackTopic) {
   const stepsIn = Array.isArray(parsed.steps) ? parsed.steps : [];
   const steps = stepsIn
@@ -373,10 +378,10 @@ function normalizeManual(parsed, fallbackTopic) {
       text: String(s.text || s.instruction || "").trim(),
     }))
     .filter((s) => s.text)
-    .slice(0, 12);
+    .slice(0, MAX_MANUAL_STEPS);
 
-  if (steps.length < 3) {
-    throw new Error("Manual needs at least 3 steps");
+  if (steps.length < MIN_MANUAL_STEPS) {
+    throw new Error(`Manual needs at least ${MIN_MANUAL_STEPS} steps`);
   }
 
   const source = parsed.source || {};
@@ -444,7 +449,9 @@ app.post("/api/manual", async (req, res) => {
         },
         steps: [{ n: 1, text: "short imperative step" }],
       }),
-      "Rules: exactly 6 short imperative steps, one sentence each, no markdown, real https source URL relevant to the topic.",
+      "Use as many steps as the task genuinely needs: minimum 2, maximum 10. Something trivial like opening a bottle takes 2-4; an involved repair takes 8-10.",
+      "Never pad with filler to reach a count, and never cram distinct actions into one step to stay under it.",
+      "Rules: one short imperative sentence per step, no markdown, real https source URL relevant to the topic.",
     ]
       .filter(Boolean)
       .join("\n");

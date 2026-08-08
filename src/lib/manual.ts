@@ -133,6 +133,105 @@ function parseMoveAction(
   return { type: "move_overlay", snap, target };
 }
 
+const PRONOUN_ONLY_RE = /^(?:it|this|that|these|those|them|one|thing)$/;
+
+// Verbs that say nothing on their own: "open this" leaves "open", which is not
+// a topic worth searching for. Live mode looks at the frame instead.
+const BARE_VERB_RE =
+  /^(?:do|use|open|close|make|fix|repair|install|remove|replace|hold|handle|start|stop|operate|unlock|attach|detach|build|work|turn|pull|push|lift)$/;
+
+/**
+ * Pull the subject out of the utterance: "steps for opening this water bottle"
+ * becomes "opening a water bottle". Without this the manual topic falls back to
+ * the video title, which is meaningless on a live camera feed.
+ *
+ * Returns undefined when the user named no subject ("open the manual", "how do
+ * I do this") so the caller can decide how to fill it in.
+ */
+export function extractTopic(message: string): string | undefined {
+  let s = message
+    .toLowerCase()
+    .replace(/[’”]/g, "'")
+    .replace(/[.?!,]+$/g, "")
+    .trim();
+
+  // "the manual for X" / "a guide on X" — the subject follows the preposition.
+  const scoped = s.match(
+    /\b(?:manual|guide|instructions?|recipe|steps?)\b.*?\b(?:for|on|about)\s+(.+)$/,
+  );
+  if (scoped) {
+    s = scoped[1];
+  } else {
+    s = s
+      .replace(/^(?:hey|ok|okay)\s+\w+[\s,]*/, "")
+      .replace(/\b(?:can|could|would)\s+you\s+/g, "")
+      .replace(
+        /^.*?\b(?:how\s+(?:do|does|can|would)\s+(?:i|you|we|one|it)|how\s+to|walk\s+me\s+through|talk\s+me\s+through|teach\s+me(?:\s+how)?(?:\s+to)?|guide\s+me(?:\s+through)?|show\s+me\s+how(?:\s+to)?|help\s+me|steps?\s+(?:for|to)|instructions?\s+(?:for|to))\s+/,
+        "",
+      );
+
+    // Peel off the command shell around a named document: "show me the sushi
+    // manual" -> "sushi". Guarded so it can't eat the verb in a real request
+    // like "open this water bottle".
+    if (/\b(?:manual|guide|instructions?|recipe|steps?)\b/.test(s)) {
+      s = s
+        .replace(
+          /^(?:open|show|pull\s+up|start|bring\s+up|get|give\s+me|read)\s+(?:me\s+)?/,
+          "",
+        )
+        .replace(/\s*\b(?:manual|guide|instructions?|recipe|steps?)\b\s*$/, "");
+    }
+  }
+
+  s = s
+    .replace(/\bplease\b/g, "")
+    .replace(/^(?:i\s+)?(?:want|need)\s+to\s+/, "")
+    // A demonstrative is useless as a search term, but the noun after it isn't.
+    .replace(/\b(?:this|that|these|those)\s+(?=\w)/g, "a ")
+    .replace(/\b(?:right now|on camera|in the video|in this video|here)\b/g, "")
+    // Nothing left to point at: "open this" / "use it".
+    .replace(/\s+(?:this|that|these|those|it|them|one|thing)$/, "")
+    .replace(/^(?:the|a|an|my)(?:\s+|$)/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (s.length < 3) return undefined;
+  if (PRONOUN_ONLY_RE.test(s)) return undefined;
+  if (BARE_VERB_RE.test(s)) return undefined;
+  if (!/[a-z]/.test(s)) return undefined;
+  return s.slice(0, 90);
+}
+
+/**
+ * Ask Grok to name what the camera is pointed at, for when the user says "how
+ * do I open this" with no noun. Reuses the vision path in /api/chat and skips
+ * TTS, since this answer is only used as a search topic.
+ */
+export async function identifyTopicFromFrame(
+  frame: string,
+  heard: string,
+): Promise<string | undefined> {
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: `The user asked: "${heard}". Name the specific object they mean in 2 to 5 words, as a search phrase describing the task (for example "opening a water bottle"). Reply with the phrase only, no punctuation.`,
+        frames: [frame],
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) return undefined;
+    const phrase = String(data.reply || "")
+      .replace(/["'.]/g, "")
+      .trim();
+    if (phrase.length < 3 || phrase.length > 90) return undefined;
+    return phrase.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Fast local router for manual overlay voice control.
  * Returns null when the utterance should fall through to normal Grok Q&A.
@@ -160,8 +259,7 @@ export function parseManualAction(
     /\b(manual|guide|instructions?|recipe|steps?)\b/.test(t) &&
     !/\b(next|previous|prev|continue|go on|proceed)\b/.test(t)
   ) {
-    const topic = /\bsushi\b/.test(t) ? "sushi" : undefined;
-    return { type: "open_manual", topic };
+    return { type: "open_manual", topic: extractTopic(t) };
   }
   // Bare "sushi manual" / "the sushi manual"
   if (/\bsushi\b/.test(t) && /\b(manual|guide|recipe|instructions?)\b/.test(t)) {
@@ -178,7 +276,7 @@ export function parseManualAction(
       t,
     )
   ) {
-    return { type: "open_manual" };
+    return { type: "open_manual", topic: extractTopic(t) };
   }
 
   // Snap a panel to a screen edge / corner. Parsed before the manual-open gate
@@ -330,7 +428,8 @@ export async function fetchManual(input: {
   videoDescription?: string;
 }): Promise<ManualDoc> {
   const topic = (input.topic || input.videoTitle || "sushi").trim();
-  const cacheKey = `grokeye-manual:${topic.toLowerCase()}`;
+  // v2 drops manuals cached back when every guide was padded to 6 steps.
+  const cacheKey = `grokeye-manual:v2:${topic.toLowerCase()}`;
 
   try {
     const cached = localStorage.getItem(cacheKey);
