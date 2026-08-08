@@ -285,20 +285,39 @@ export function mountSpotifyRoutes(app) {
       }
 
       // Transfer first so Spotify actually registers the Web Playback device.
+      // Only when needed — transferring every play can briefly glitch audio.
       if (deviceId) {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const transfer = await fetch("https://api.spotify.com/v1/me/player", {
-            method: "PUT",
-            headers: {
-              Authorization: `Bearer ${token}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ device_ids: [deviceId], play: false }),
+        let needTransfer = true;
+        try {
+          const cur = await fetch("https://api.spotify.com/v1/me/player", {
+            headers: { Authorization: `Bearer ${token}` },
           });
-          if (transfer.status === 204 || transfer.status === 202 || transfer.status === 200) {
-            break;
+          if (cur.status === 200) {
+            const state = await cur.json().catch(() => null);
+            if (state?.device?.id === deviceId) needTransfer = false;
           }
-          await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
+        } catch {
+          /* transfer below */
+        }
+        if (needTransfer) {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const transfer = await fetch("https://api.spotify.com/v1/me/player", {
+              method: "PUT",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ device_ids: [deviceId], play: false }),
+            });
+            if (
+              transfer.status === 204 ||
+              transfer.status === 202 ||
+              transfer.status === 200
+            ) {
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
+          }
         }
       }
 

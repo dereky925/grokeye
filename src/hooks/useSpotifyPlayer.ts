@@ -241,8 +241,16 @@ async function playOnDevice(
   } catch {
     /* voice path may lack a user gesture */
   }
+
+  // Stop / mute the previous item first so we don't leak a frame of old audio
+  // while the Web API swaps context (music ↔ podcast).
   try {
-    await player?.setVolume(1);
+    await player?.pause();
+  } catch {
+    /* ignore */
+  }
+  try {
+    await player?.setVolume(0);
   } catch {
     /* ignore */
   }
@@ -269,13 +277,19 @@ async function playOnDevice(
       const data2 = await r2.json().catch(() => ({}));
       if (!r2.ok) throw new Error(data2.error || msg);
     } else {
+      try {
+        await player?.setVolume(1);
+      } catch {
+        /* ignore */
+      }
       throw new Error(msg);
     }
   }
 
+  // /me/player/play already starts the new item — don't resume() the SDK or it
+  // can briefly flush the previous buffered track/episode.
   try {
     await player?.setVolume(1);
-    await player?.resume();
   } catch {
     /* ignore */
   }
