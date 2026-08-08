@@ -7,13 +7,6 @@ type Props = {
   onSelect: (video: VideoItem) => void;
 };
 
-function formatDuration(seconds: number) {
-  if (!seconds) return "";
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
 export default function Dashboard({
   videos,
   loading,
@@ -46,9 +39,9 @@ export default function Dashboard({
                 ) : (
                   <img src={video.thumbnail} alt="" />
                 )}
-                <span className={`video-duration ${video.live ? "live" : ""}`}>
-                  {video.live ? "LIVE" : formatDuration(video.durationSeconds)}
-                </span>
+                {video.live && (
+                  <span className="video-duration live">LIVE</span>
+                )}
               </div>
               <div className="video-meta">
                 <h2>{video.title}</h2>

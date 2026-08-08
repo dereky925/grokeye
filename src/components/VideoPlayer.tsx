@@ -932,8 +932,14 @@ export default function VideoPlayer({ video, onBack }: Props) {
   return (
     <div className="player-screen">
       <div className="player-bar">
-        <button type="button" className="back-btn" onClick={onBack}>
-          ← Library
+        <button
+          type="button"
+          className="back-btn"
+          onClick={onBack}
+          aria-label="Back to library"
+          title="Back to library"
+        >
+          ←
         </button>
         <div className="player-title">
           {video.title}

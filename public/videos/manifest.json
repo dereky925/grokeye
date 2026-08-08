@@ -2,10 +2,10 @@
   {
     "id": "sushi",
     "title": "Sushi",
-    "description": "A short sushi prep clip — first 20 seconds.",
+    "description": "Hands-on sushi prep — knife work, rice, and rolling.",
     "src": "/videos/sushi.mp4",
     "thumbnail": "/videos/sushi-thumb.jpg",
-    "durationSeconds": 20,
+    "durationSeconds": 60,
     "detectorPack": "sushi"
   },
   {
@@ -19,7 +19,7 @@
   {
     "id": "ikea",
     "title": "IKEA Furniture",
-    "description": "Assembling an IKEA MICKE desk — one-minute clip from 1:30–2:30.",
+    "description": "Assembling an IKEA MICKE desk from the box.",
     "src": "/videos/ikea.mp4",
     "thumbnail": "/videos/ikea-thumb.jpg",
     "durationSeconds": 60,
