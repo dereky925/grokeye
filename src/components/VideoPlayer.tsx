@@ -38,8 +38,17 @@ const NORMAL_VOLUME = 1;
 
 /** Drop STT that is mostly Grok reading its own reply back into the mic. */
 function looksLikeEcho(heard: string, spoken: string) {
-  const a = heard
-    .toLowerCase()
+  const raw = heard.toLowerCase();
+  // Fresh user commands should never be treated as speaker bleed.
+  if (
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop)\b/.test(
+      raw,
+    )
+  ) {
+    return false;
+  }
+
+  const a = raw
     .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2);
@@ -48,14 +57,14 @@ function looksLikeEcho(heard: string, spoken: string) {
     .replace(/[^\w\s]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2);
-  if (a.length < 2 || b.length < 2) return false;
+  if (a.length < 3 || b.length < 3) return false;
   const setB = new Set(b);
   const overlap = a.filter((w) => setB.has(w)).length;
-  if (overlap / a.length >= 0.55) return true;
+  if (overlap / a.length >= 0.7) return true;
   const heardJoin = a.join(" ");
   const spokenJoin = b.join(" ");
-  if (heardJoin.length >= 12 && spokenJoin.includes(heardJoin)) return true;
-  if (spokenJoin.length >= 12 && heardJoin.includes(spokenJoin.slice(0, 48))) {
+  if (heardJoin.length >= 18 && spokenJoin.includes(heardJoin)) return true;
+  if (spokenJoin.length >= 18 && heardJoin.includes(spokenJoin.slice(0, 48))) {
     return true;
   }
   return false;
@@ -395,6 +404,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
     onQuestion: (text) => {
       if (looksLikeEcho(text, lastSpokenRef.current)) {
         console.log("[voice] ignoring likely TTS echo:", text);
+        setPhase("idle");
+        setTranscript("");
+        if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
         return;
       }
       void handleQuestion(text);
