@@ -6,5 +6,13 @@
     "src": "/videos/sushi.mp4",
     "thumbnail": "/videos/sushi-thumb.jpg",
     "durationSeconds": 20
+  },
+  {
+    "id": "pov-copper-plumbing",
+    "title": "POV Copper Plumbing",
+    "description": "First-person copper pipework, measuring, fitting, and wall preparation.",
+    "src": "/videos/pov-copper-plumbing.mp4",
+    "thumbnail": "/videos/pov-copper-plumbing-thumb.jpg",
+    "durationSeconds": 160
   }
 ]
