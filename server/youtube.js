@@ -100,12 +100,13 @@ async function searchViaDataApi(maxResults = 15) {
 
   const queries = [
     "Starship Flight webcast",
-    "Starship launch webcast",
-    "Starship Flight official livestream",
+    "Starship Flight Test",
+    "Starship launch",
   ];
 
   /** @type {any[]} */
   const all = [];
+  let lastErr = null;
   for (const q of queries) {
     const url = new URL("https://www.googleapis.com/youtube/v3/search");
     url.searchParams.set("part", "snippet");
@@ -119,11 +120,11 @@ async function searchViaDataApi(maxResults = 15) {
     const r = await fetch(url);
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
-      const msg =
-        data.error?.message || data.error?.errors?.[0]?.message || `YouTube API ${r.status}`;
-      const err = new Error(msg);
-      err.status = r.status;
-      throw err;
+      lastErr =
+        data.error?.message ||
+        data.error?.errors?.[0]?.message ||
+        `YouTube API ${r.status}`;
+      continue;
     }
     for (const item of data.items || []) {
       const score = scoreStarshipTitle(
@@ -133,6 +134,11 @@ async function searchViaDataApi(maxResults = 15) {
       const video = toVideo(item, score);
       if (video) all.push(video);
     }
+  }
+  if (!all.length && lastErr) {
+    const err = new Error(lastErr);
+    err.status = 403;
+    throw err;
   }
   return all;
 }
