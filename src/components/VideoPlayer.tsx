@@ -19,7 +19,6 @@ import {
   applyManualAction,
   fetchManual,
   parseManualAction,
-  speakText,
 } from "../lib/manual";
 import type {
   HighlightLabel,
@@ -180,22 +179,6 @@ export default function VideoPlayer({ video, onBack }: Props) {
     }
   }, [stopTts]);
 
-  const playSpoken = useCallback(
-    async (text: string, sessionId: number) => {
-      lastSpokenRef.current = text;
-      setMicArmed(false);
-      setReply(text);
-      setPhase("speaking");
-      const audioUrl = await speakText(text);
-      if (sessionId !== sessionRef.current) {
-        URL.revokeObjectURL(audioUrl);
-        return;
-      }
-      await playAudioUrl(audioUrl, sessionId);
-    },
-    [playAudioUrl],
-  );
-
   const handleQuestion = useCallback(
     async (heard: string) => {
       const sessionId = ++sessionRef.current;
@@ -236,7 +219,6 @@ export default function VideoPlayer({ video, onBack }: Props) {
             };
             setManual(loading);
             manualRef.current = loading;
-            setReply("One sec…");
 
             const doc = await fetchManual({
               topic,
@@ -244,17 +226,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
               videoDescription: video.description,
             });
             if (sessionId !== sessionRef.current) return;
+            // Panel-only: update the overlay, no spoken readout or center text.
             const result = applyManualAction(manualRef.current, action, doc);
             setManual(result.state);
             manualRef.current = result.state;
-            await playSpoken(result.speak, sessionId);
             return;
           }
 
+          // Panel-only: update the overlay, no spoken readout or center text.
           const result = applyManualAction(manualRef.current, action);
           setManual(result.state);
           manualRef.current = result.state;
-          await playSpoken(result.speak, sessionId);
           return;
         }
 
@@ -379,7 +361,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
       }
     },
-    [armMicSoon, playAudioUrl, playSpoken, video.description, video.detectorPack, video.title],
+    [armMicSoon, playAudioUrl, video.description, video.detectorPack, video.title],
   );
 
   const { supported, micLive, interim, startCommand } = useGrokListener({

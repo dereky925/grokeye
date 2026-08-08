@@ -70,14 +70,11 @@ export function parseManualAction(
     return { type: "open_manual" };
   }
   if (
-    /\b(how (do i|to) (make|roll|prepare)|walk me through|teach me|guide me)\b/.test(
+    /\b(how (do (i|you|we)|to|does (one|it))\b|walk me through|talk me through|teach me|guide me|show me how|help me (make|build|fix|repair|do|replace|install)|steps? (for|to)|instructions? (for|to))\b/.test(
       t,
     )
   ) {
     return { type: "open_manual" };
-  }
-  if (/\bsushi\b/.test(t) && /\b(manual|guide|instructions?|recipe|steps?)\b/.test(t)) {
-    return { type: "open_manual", topic: "sushi" };
   }
 
   if (!manualOpen) return null;
@@ -92,9 +89,10 @@ export function parseManualAction(
   }
 
   if (
-    /\b(previous( step)?|prev( step)?|go back|back( a step)?|last step)\b/.test(
+    /\b(previous(?:\s+(step|one))?|prev(?:\s+step)?|go back|back(?:\s+(a\s+step|up|one))?|last step)\b/.test(
       t,
-    )
+    ) ||
+    /^(previous|back)[.!?]?$/.test(t)
   ) {
     return { type: "prev_step" };
   }
