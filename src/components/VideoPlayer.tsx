@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import VoiceBubble from "./VoiceBubble";
+import VoiceBubble, { VOICE_BUBBLE_EXIT_MS } from "./VoiceBubble";
 import GuidanceStatusChip from "./GuidanceStatusChip";
 import ManualOverlay from "./ManualOverlay";
 import MiniSpotify from "./MiniSpotify";
@@ -27,16 +27,18 @@ import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
 import { useTwitterFeed } from "../hooks/useTwitterFeed";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
 import {
+  extractLocateTarget,
+  filterLabelsByEcho,
   normalizeLabels,
   normalizeLink,
   wantsHighlight,
   withLabelIds,
 } from "../lib/highlights";
+import { tightenLabelsOnFrame } from "../lib/tighten";
 import { detectColorTargets } from "../lib/colorDetect";
 import {
   applyManualAction,
   fetchManual,
-  parseManualAction,
   snapPosition,
   speakText,
 } from "../lib/manual";
@@ -51,14 +53,10 @@ import { fetchVerify, parseVerifyAction } from "../lib/verify";
 import {
   fetchGuidance,
   normalizeGuidance,
-  wantsMotionGuidance,
 } from "../lib/guidance";
-import {
-  findCatalogChoreography,
-  type CatalogMotionCue,
-} from "../lib/choreography";
-import { snapCommand } from "../lib/commands";
-import { cropSprite, fetchGhost, wantsGhost } from "../lib/ghost";
+import { type CatalogMotionCue } from "../lib/choreography";
+import { resolveInstructionRoute } from "../lib/instructionRouting";
+import { cropSprite, fetchGhost } from "../lib/ghost";
 import GhostOverlay from "./GhostOverlay";
 import { parseSpotifyAction } from "../lib/spotify";
 import { parseTwitterAction } from "../lib/twitter";
@@ -75,6 +73,12 @@ import type {
   VideoItem,
   VoicePhase,
 } from "../types";
+
+// The local YOLO ladder is dev-only tooling: the timed demo runs Grok boxes +
+// the local tracker per the demo contract, and a loose COCO match ("person"
+// for "hand") pre-empting Grok was a top wrong-object source. VITE_LOCAL_DETECTOR=1
+// re-enables it.
+const USE_LOCAL_DETECTOR = import.meta.env.VITE_LOCAL_DETECTOR === "1";
 
 type Props = {
   video: VideoItem;
@@ -139,6 +143,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const turnInFlightRef = useRef(false);
   const highlightHoldRef = useRef(false);
   const speechFrameRef = useRef<string | null>(null);
+  const speechTimeRef = useRef<number | null>(null);
   const toolsRef = useRef<ToolsState | null>(null);
   const resumeAfterGhostRef = useRef(false);
   const ghostRef = useRef<GhostState | null>(null);
@@ -154,6 +159,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [guidanceCue, setGuidanceCue] = useState<GuidanceCue | null>(null);
   const [catalogMotion, setCatalogMotion] =
     useState<CatalogMotionCue | null>(null);
+  const [catalogMotionLeaving, setCatalogMotionLeaving] = useState(false);
   const [highlights, setHighlights] = useState<HighlightLabel[]>([]);
   const [highlightLinks, setHighlightLinks] = useState<HighlightLink[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -332,10 +338,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
   // A guide without boxes (not visible / unsafe) still needs a bounded HUD
   // lifetime. Box-backed guides usually clear sooner through VideoHighlights.
   useEffect(() => {
-    if (!guidanceCue) return;
+    // Authored choreography instead follows the reply bubble exactly below.
+    if (!guidanceCue || catalogMotion) return;
     const timer = window.setTimeout(clearHighlights, 12000);
     return () => window.clearTimeout(timer);
-  }, [clearHighlights, guidanceCue]);
+  }, [catalogMotion, clearHighlights, guidanceCue]);
+
+  // Authored choreography is part of Grok's answer, not a persistent
+  // highlight. Start its exit with VoiceBubble and remove both together.
+  useEffect(() => {
+    if (!catalogMotion || phase !== "idle") {
+      setCatalogMotionLeaving(false);
+      return;
+    }
+
+    setCatalogMotionLeaving(true);
+    const timer = window.setTimeout(clearHighlights, VOICE_BUBBLE_EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [catalogMotion, clearHighlights, phase]);
 
   const canInterrupt =
     detecting ||
@@ -398,6 +418,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       const sessionId = ++sessionRef.current;
       pendingTaskRef.current = null;
       const el = videoRef.current;
+      const turnTime = speechTimeRef.current ?? el?.currentTime ?? 0;
       turnInFlightRef.current = true;
       setTranscript(heard);
       setError(null);
@@ -568,9 +589,18 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
-        // Ahead of the manual router on purpose: "how do I use this jack?"
-        // matches the open-manual regex, but the user wants a demo, not a guide.
-        if (wantsGhost(heard) && el) {
+        const instructionRoute = resolveInstructionRoute({
+          primary: heard,
+          alternatives,
+          manualOpen: Boolean(manualRef.current),
+          toolsOpen: Boolean(toolsRef.current),
+          videoId: video.id,
+          currentTime: turnTime,
+        });
+
+        // Catalog choreography has already won in resolveInstructionRoute.
+        // Ghost remains the dynamic visual fallback for its narrower grammar.
+        if (instructionRoute?.kind === "ghost" && el) {
           el.pause();
           resumeAfterGhostRef.current = true;
           const frame = captureFrame(el, { maxW: 1024, quality: 0.8 });
@@ -590,7 +620,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           let planned;
           try {
             planned = await fetchGhost({
-              question: heard,
+              question: instructionRoute.utterance,
               frame,
               videoTitle: video.title,
               stepText: m ? m.doc.steps[m.stepIndex]?.text : undefined,
@@ -629,13 +659,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
-        const open = Boolean(manualRef.current);
-        const toolsOpen = Boolean(toolsRef.current);
-        // Exact regex first; fall back to fuzzy command snapping over all
-        // recognition alternatives to recover misheard controls.
         const action =
-          parseManualAction(heard, open, toolsOpen) ??
-          snapCommand([heard, ...alternatives], open);
+          instructionRoute?.kind === "manual" ? instructionRoute.action : null;
 
         if (action) {
           // Manual turns don't need the frozen frame — let it play under the card.
@@ -717,14 +742,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
             setManual(result.state);
             manualRef.current = result.state;
             if (result.speak) {
-              lastSpokenRef.current = result.speak;
-              setMicArmed(false);
-              setPhase("speaking");
               try {
-                const url = await speakText(result.speak);
-                await playAudioUrl(url, sessionId);
+                await playSpoken(result.speak, sessionId);
               } catch {
-                /* overlay already updated */
+                /* overlay and visible reply already updated */
               }
             }
             return;
@@ -735,14 +756,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
           manualRef.current = result.state;
           // Read steps aloud; keep panel moves silent.
           if (result.speak && action.type !== "move_overlay") {
-            lastSpokenRef.current = result.speak;
-            setMicArmed(false);
-            setPhase("speaking");
             try {
-              const url = await speakText(result.speak);
-              await playAudioUrl(url, sessionId);
+              await playSpoken(result.speak, sessionId);
             } catch {
-              /* overlay already updated */
+              /* overlay and visible reply already updated */
             }
           }
           return;
@@ -931,7 +948,18 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
-        const motionGuidance = wantsMotionGuidance(heard);
+        const motionGuidance =
+          instructionRoute?.kind === "catalog_motion" ||
+          instructionRoute?.kind === "motion";
+        const motionMessage =
+          instructionRoute?.kind === "catalog_motion" ||
+          instructionRoute?.kind === "motion"
+            ? instructionRoute.utterance
+            : heard;
+        const authoredMotion =
+          instructionRoute?.kind === "catalog_motion"
+            ? instructionRoute.cue
+            : null;
         const highlight = !motionGuidance && wantsHighlight(heard);
         // Web-fact turns skip frames entirely — the answer lives online, and
         // cached repeats come back before the video even notices.
@@ -944,9 +972,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
         if (!wantFrames) resumeIfAutoPaused();
 
         let frames: string[] = [];
-        let currentTime = el?.currentTime || 0;
+        let currentTime = turnTime;
         let duration = el && Number.isFinite(el.duration) ? el.duration : 0;
         let precomputed: Omit<HighlightLabel, "id">[] = [];
+        let geomFrame: string | null = null;
 
         if (wantFrames && el) {
           // Prefer the snapshot taken at speech onset — the frame the user
@@ -960,6 +989,13 @@ export default function VideoPlayer({ video, onBack }: Props) {
                 : undefined,
             );
           if (frame) frames = [frame];
+          if (highlight) {
+            // Geometry rides a fresh end-of-utterance frame — the onset
+            // snapshot is seconds stale by now and only the spoken reply
+            // wants it. Sharper too (960px): it skips the chat payload.
+            geomFrame =
+              captureFrame(el, { maxW: 960, quality: 0.68 }) ?? frame ?? null;
+          }
         }
 
         if (motionGuidance) {
@@ -972,26 +1008,27 @@ export default function VideoPlayer({ video, onBack }: Props) {
           setHighlightSeed(null);
           highlightHoldRef.current = false;
 
-          const authored = findCatalogChoreography(
-            video.id,
-            currentTime,
-            heard,
-          );
-          if (authored) {
+          if (authoredMotion) {
             // Known demo footage gets instant silhouette choreography: trace
             // the real object, then move the same outline. No model rectangle
             // and no geometry latency.
+            setManual(null);
+            manualRef.current = null;
+            setTools(null);
+            toolsRef.current = null;
             setScanning(false);
-            setCatalogMotion(authored);
+            setCatalogMotionLeaving(false);
+            setCatalogMotion(authoredMotion);
             setGuidanceCue({
               status: "ready",
-              note: authored.note,
+              note: authoredMotion.note,
               motion: null,
             });
+            setReply(`Follow the animated outline: ${authoredMotion.label}.`);
           } else if (frames[0]) {
             setScanning(true);
             void fetchGuidance({
-              message: heard,
+              message: motionMessage,
               frame: frames[0],
               videoTitle: video.title,
             })
@@ -1048,7 +1085,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
             }
           }
 
-          if (!precomputed.length && frames[0]) {
+          if (USE_LOCAL_DETECTOR && !precomputed.length && frames[0]) {
             try {
               const detectRes = await fetch("/api/detect", {
                 method: "POST",
@@ -1082,20 +1119,40 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
         // No detector hit — Grok boxes ride a parallel labels-only call so
         // they paint while the spoken reply is still generating.
-        if (highlight && !precomputed.length && frames.length) {
+        if (highlight && !precomputed.length && (geomFrame || frames.length)) {
           setScanning(true);
+          const geomSeed = geomFrame ?? frames[0] ?? null;
+          const locateTarget = extractLocateTarget(heard);
           void fetchLabels({
-            message: heard,
-            frames,
+            message: locateTarget ?? heard,
+            frames: geomFrame ? [geomFrame] : frames,
             videoTitle: video.title,
           })
-            .then((raw) => {
+            .then(async (raw) => {
               if (sessionId !== sessionRef.current) return;
               setScanning(false);
-              const placed = withLabelIds(normalizeLabels(raw.labels));
+              // Echo cross-check catches wrong-object answers; skipped for
+              // routes, whose destination label names a different object.
+              const rawLabels = raw.link
+                ? raw.labels
+                : filterLabelsByEcho(raw.labels, locateTarget);
+              let normalized = normalizeLabels(rawLabels);
+              if (geomSeed && normalized.some((l) => l.kind === "box")) {
+                try {
+                  normalized = await tightenLabelsOnFrame(
+                    geomSeed,
+                    normalized,
+                    locateTarget ?? heard,
+                  );
+                } catch {
+                  // Tightening is best-effort; the raw boxes still paint.
+                }
+                if (sessionId !== sessionRef.current) return;
+              }
+              const placed = withLabelIds(normalized);
               const links = normalizeLink(raw.link, placed);
               highlightHoldRef.current = placed.length > 0;
-              setHighlightSeed(frames[0] ?? null);
+              setHighlightSeed(geomSeed);
               setHighlights(placed);
               setHighlightLinks(links);
               const pending = pendingTaskRef.current;
@@ -1120,6 +1177,13 @@ export default function VideoPlayer({ video, onBack }: Props) {
               duration,
               frames,
               lowDetail: highlight || motionGuidance,
+              motionGuide: authoredMotion
+                ? {
+                    note: authoredMotion.note,
+                    label: authoredMotion.label,
+                    scene: authoredMotion.scene,
+                  }
+                : undefined,
               // Detector boxes ride along so Grok narrates them as authoritative;
               // Grok-box turns get geometry from the parallel /api/labels call.
               detections: precomputed.length ? precomputed : undefined,
@@ -1171,6 +1235,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
           setTranscript("");
           setTtsAudio(null);
           setUsedVision(false);
+          speechFrameRef.current = null;
+          speechTimeRef.current = null;
           if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
           // Placed callouts extend the freeze; clearHighlights resumes later.
           if (!highlightHoldRef.current) resumeIfAutoPaused();
@@ -1231,6 +1297,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
             maxW: 768,
             quality: 0.62,
           });
+          speechTimeRef.current = el.currentTime || 0;
           el.volume = 0.02;
         }
       },
@@ -1454,7 +1521,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
         )}
         {task && <TaskStateChip task={task} />}
         {guidanceCue && (
-          <GuidanceStatusChip cue={guidanceCue} authored={Boolean(catalogMotion)} />
+          <GuidanceStatusChip
+            cue={guidanceCue}
+            authored={Boolean(catalogMotion)}
+            leaving={catalogMotionLeaving}
+          />
         )}
         <VideoHighlights
           videoRef={videoRef}
@@ -1462,6 +1533,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           links={highlightLinks}
           guidanceMotion={guidanceCue?.motion ?? null}
           catalogMotion={catalogMotion}
+          catalogMotionLeaving={catalogMotionLeaving}
           guidanceStatus={guidanceCue?.status ?? null}
           holdUntil={holdUntil}
           seedFrame={highlightSeed}

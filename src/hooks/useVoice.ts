@@ -529,7 +529,7 @@ export async function fetchLabels(input: {
   message: string;
   frames: string[];
   videoTitle?: string;
-}): Promise<{ labels: unknown[]; link: unknown }> {
+}): Promise<{ labels: unknown[]; link: unknown; status: string | null }> {
   const res = await fetch("/api/labels", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -542,6 +542,7 @@ export async function fetchLabels(input: {
   return {
     labels: Array.isArray(data.labels) ? data.labels : [],
     link: data.link ?? null,
+    status: typeof data.status === "string" ? data.status : null,
   };
 }
 
@@ -555,6 +556,8 @@ export async function askGrok(input: {
   wantLabels?: boolean;
   lowDetail?: boolean;
   detectorPack?: string;
+  /** Authored UI motion already visible; keep live prose synchronized with it. */
+  motionGuide?: { note: string; label: string; scene?: string };
   /** Precomputed detector boxes — Grok narrates only, no second detect. */
   detections?: Array<{ text: string; x: number; y: number; w: number; h: number }>;
 }) {
@@ -568,7 +571,12 @@ export async function askGrok(input: {
     throw new Error(chatData.error || "Chat failed");
   }
 
-  const reply = String(chatData.reply || "");
+  const rawReply = String(chatData.reply || "").trim();
+  const reply =
+    input.motionGuide &&
+    !/\b(animat(?:e|ed|ion)|outline|motion path|arrow)\b/i.test(rawReply)
+      ? `Follow the animated outline. ${rawReply}`.trim()
+      : rawReply;
   const labels = Array.isArray(chatData.labels) ? chatData.labels : [];
 
   // Kick off TTS immediately so the client can paint labels while audio encodes.

@@ -138,6 +138,26 @@ app.post("/api/chat", async (req, res) => {
     const duration = Number(req.body?.duration);
     const wantLabels = Boolean(req.body?.wantLabels);
     const lowDetail = Boolean(req.body?.lowDetail);
+    const motionGuideInput =
+      req.body?.motionGuide && typeof req.body.motionGuide === "object"
+        ? req.body.motionGuide
+        : null;
+    const motionGuide = motionGuideInput
+      ? {
+          note: String(motionGuideInput.note || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 100),
+          label: String(motionGuideInput.label || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 100),
+          scene: String(motionGuideInput.scene || "")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 240),
+        }
+      : null;
     const detectorPack = req.body?.detectorPack
       ? String(req.body.detectorPack)
       : "sushi";
@@ -208,6 +228,9 @@ app.post("/api/chat", async (req, res) => {
       hasFrames
         ? "The user asked something about the video/screen. Frame(s) and playback timing are attached — commit to your best read of the frame and answer decisively. Never lead with what you can't see or can't tell. If a detail genuinely isn't in frame, coach the best expert move anyway and tuck any caveat into a few trailing words — it is never the headline."
         : "No video frame is attached for this turn. Answer decisively from general knowledge and the video title/description. Don't claim to see the screen, but don't dwell on that either — just answer.",
+      motionGuide && (motionGuide.note || motionGuide.label)
+        ? `The UI is already showing an authored animated outline for this action (${motionGuide.note}; ${motionGuide.label}). Explicitly tell the user to follow the animated outline, then coach the physical move shown. Scene: ${motionGuide.scene || "current visible action"}.`
+        : "",
       "Be supremely confident — a master tradesman who has seen this a thousand times. Banned openers: 'I can't tell', 'I can't see', 'I don't know', 'it's hard to say', 'it depends'. Make the call and own it; when you're inferring rather than seeing, phrase it as direct coaching ('keep the flame on the fitting') instead of an assessment you couldn't make.",
       labelMode && usedLocalBoxes
         ? [
@@ -346,36 +369,43 @@ app.post("/api/labels", async (req, res) => {
 
     const system = [
       "You locate objects in a video frame for AR-style visual callouts.",
-      'Respond with ONLY valid JSON (no markdown): {"labels":[{"text":"short label","kind":"box","x":0,"y":0,"w":0,"h":0}],"link":null}',
+      'Respond with ONLY valid JSON (no markdown): {"status":"clear","labels":[{"text":"short label","object":"object name","kind":"box","x":0,"y":0,"w":0,"h":0}],"link":null}',
       "Box fields are normalized 0–1 with origin at the top-left of the image (x,y = top-left of the box; w,h = size).",
+      "A box must cover ONLY the visible pixels of the object itself — its tightest bounding rectangle. Exclude hands, arms, tools, plates, shadows, and background unless they are what was asked for. If unsure between a larger and a smaller plausible box, return the smaller.",
+      '"object" echoes the user\'s own word(s) for what the box actually contains (e.g. "salmon", "fan cables").',
       'kind is "box" for a discrete object (reticle) or "zone" for a region/area/surface (soft fill), e.g. a work area, a spill, empty counter space.',
       'When the question asks where something goes, connects, plugs in, or leads (a route between two things), return BOTH endpoints as labels and set "link":{"from":0,"to":1} using label indices — from = the thing in hand / the source, to = the destination. Otherwise "link":null.',
-      "Use at most 2 labels. Tight boxes around the referenced subject(s). Empty labels array if nothing clear to highlight.",
+      '"status" is "clear" when confident, "ambiguous" when several visible objects could match, or "not_visible" when the requested object is not in the frame — then labels must be [].',
+      "Use at most 2 labels. Empty labels array if nothing clear to highlight.",
       videoTitle ? `Video title: ${videoTitle}.` : "",
     ]
       .filter(Boolean)
       .join(" ");
 
-    const body = JSON.stringify({
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: `Locate: ${message}` },
-            {
-              type: "image_url",
-              image_url: { url: frames[frames.length - 1], detail: "low" },
-            },
-          ],
-        },
-      ],
-    });
+    const makeBody = (detail) =>
+      JSON.stringify({
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: `Locate: ${message}` },
+              {
+                type: "image_url",
+                image_url: { url: frames[frames.length - 1], detail },
+              },
+            ],
+          },
+        ],
+      });
 
     // Upstream vision latency is a per-request lottery (~1.5s fast path,
-    // 5–9s slow path). Hedge with two identical calls; first result wins.
+    // 5–9s slow path) regardless of image detail, so hedge asymmetrically:
+    // one low-detail and one high-detail call, first result wins — about half
+    // of turns get sharper grounding for free.
+    const bodies = [makeBody("low"), makeBody("high")];
     const controllers = [new AbortController(), new AbortController()];
     const attempt = (i) =>
       fetch("https://api.x.ai/v1/chat/completions", {
@@ -384,7 +414,7 @@ app.post("/api/labels", async (req, res) => {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body,
+        body: bodies[i],
         signal: controllers[i].signal,
       }).then(async (response) => {
         const data = await response.json();
@@ -409,17 +439,32 @@ app.post("/api/labels", async (req, res) => {
     const raw = data?.choices?.[0]?.message?.content?.trim() || "";
     let labels = [];
     let link = null;
+    let status = null;
     try {
       const parsed = parseManualJson(raw);
       labels = Array.isArray(parsed.labels) ? parsed.labels : [];
       link =
         parsed.link && typeof parsed.link === "object" ? parsed.link : null;
+      status = typeof parsed.status === "string" ? parsed.status : null;
     } catch {
       labels = [];
     }
 
+    // Plausibility guard: a "tight" reticle never covers half the frame.
+    labels = labels.filter((l) => {
+      const w = Number(l?.w);
+      const h = Number(l?.h);
+      if (l?.kind !== "zone" && Number.isFinite(w * h) && w * h > 0.5) {
+        console.warn(
+          `[labels] dropped implausibly large box ${w.toFixed(2)}×${h.toFixed(2)} ("${l?.text ?? ""}")`,
+        );
+        return false;
+      }
+      return true;
+    });
+
     console.log(`[labels] upstream ${Math.round(performance.now() - t0)}ms`);
-    res.json({ labels, link, model });
+    res.json({ labels, link, status, model });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Labels failed" });
