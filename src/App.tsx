@@ -10,7 +10,7 @@ import type { VideoItem } from "./types";
 const LIVE_CAMERA: VideoItem = {
   id: "live",
   title: "Live Camera",
-  description: "Point the webcam at whatever you're working on and ask Grok.",
+  description: "Point the webcam at whatever you're doing.",
   src: "",
   thumbnail: "",
   durationSeconds: 0,
@@ -20,7 +20,7 @@ const LIVE_CAMERA: VideoItem = {
 const FLIP_COACH: VideoItem = {
   id: "flip",
   title: "Bottle Flip Coach",
-  description: "Flip a bottle, then ask how you did. Grok replays the frames and explains the physics.",
+  description: "Flip a bottle — Grok grades the physics.",
   src: "",
   thumbnail: "",
   durationSeconds: 0,

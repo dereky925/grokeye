@@ -2,7 +2,7 @@
   {
     "id": "sushi",
     "title": "Sushi",
-    "description": "Hands-on sushi prep — knife work, rice, and rolling.",
+    "description": "Knife work, rice, and rolling.",
     "src": "/videos/sushi.mp4",
     "thumbnail": "/videos/sushi-thumb.jpg",
     "durationSeconds": 60,
@@ -11,7 +11,7 @@
   {
     "id": "pov-copper-plumbing",
     "title": "POV Copper Plumbing",
-    "description": "First-person copper pipework, measuring, fitting, and wall preparation.",
+    "description": "Measuring, fitting, and wall prep.",
     "src": "/videos/pov-copper-plumbing.mp4",
     "thumbnail": "/videos/pov-copper-plumbing-thumb.jpg",
     "durationSeconds": 160
@@ -19,7 +19,7 @@
   {
     "id": "pov-pc-build-fail",
     "title": "POV First PC Build (novice)",
-    "description": "Head-cam POV of a first-time PC builder mid-build: motherboard in its wrap next to loose accessory bags, an AIO liquid-cooler radiator with twin fans, a tangle of unrouted fan cables, and a bracket being fitted into the case. The builder is a novice — sloppy, ESD-risky handling and mistakes are present and uncorrected.",
+    "description": "First-time build with sloppy, ESD-risky mistakes.",
     "src": "/videos/pov-pc-build-fail.mp4",
     "thumbnail": "/videos/pov-pc-build-fail-thumb.jpg",
     "durationSeconds": 17
@@ -27,7 +27,7 @@
   {
     "id": "pov-pc-build-cpu-ram",
     "title": "POV PC Build Guide — CPU & RAM",
-    "description": "First-person build-guide footage: unboxing an Intel Core i5-12600KF, seating the CPU in the motherboard socket, closing the retention arm, then clipping G.Skill Ripjaws V DDR4 sticks into the DIMM slots. Deliberate, correct step-by-step technique throughout.",
+    "description": "Seat a CPU and install DDR4 correctly.",
     "src": "/videos/pov-pc-build-cpu-ram.mp4",
     "thumbnail": "/videos/pov-pc-build-cpu-ram-thumb.jpg",
     "durationSeconds": 158
@@ -35,7 +35,7 @@
   {
     "id": "pov-pc-build-gpu",
     "title": "POV PC Build Guide — GPU",
-    "description": "First-person build-guide footage: unboxing an XFX Radeon graphics card, removing PCIe slot covers on a white case, seating the card in the PCIe x16 slot, and connecting the power cable. Deliberate, correct step-by-step technique.",
+    "description": "Install a GPU and connect power.",
     "src": "/videos/pov-pc-build-gpu.mp4",
     "thumbnail": "/videos/pov-pc-build-gpu-thumb.jpg",
     "durationSeconds": 125
@@ -43,7 +43,7 @@
   {
     "id": "pov-tuna-melt",
     "title": "POV Tuna Melt",
-    "description": "Overhead head-cam POV of making a tuna melt in a home kitchen: opening a tuna can over a wooden cutting board, chopping celery, mixing in mayonnaise, assembling the sandwich, and frying it in a skillet on the stove.",
+    "description": "Mix, assemble, and fry a tuna melt.",
     "src": "/videos/pov-tuna-melt.mp4",
     "thumbnail": "/videos/pov-tuna-melt-thumb.jpg",
     "durationSeconds": 117
@@ -51,7 +51,7 @@
   {
     "id": "tesla",
     "title": "Tesla Repair",
-    "description": "A DIY mechanic pulling the rear drive unit on a Tesla in the driveway.",
+    "description": "Pulling a Tesla rear drive unit.",
     "src": "/videos/tesla.mp4",
     "thumbnail": "/videos/tesla-thumb.jpg",
     "durationSeconds": 394
@@ -59,7 +59,7 @@
   {
     "id": "ikea",
     "title": "IKEA Furniture",
-    "description": "Assembling an IKEA MICKE desk from the box.",
+    "description": "Assembling an IKEA MICKE desk.",
     "src": "/videos/ikea.mp4",
     "thumbnail": "/videos/ikea-thumb.jpg",
     "durationSeconds": 60,

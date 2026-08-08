@@ -911,12 +911,21 @@ video {
   display: block;
 }
 
-.player-transport {
+.player-transport-dock {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   z-index: 48;
+  /* Invisible bottom-of-screen hover zone. */
+  height: 5.5rem;
+  display: flex;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+
+.player-transport {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -925,6 +934,20 @@ video {
   color: var(--text);
   user-select: none;
   -webkit-user-select: none;
+  opacity: 0;
+  transform: translateY(10px);
+  pointer-events: none;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.player-transport-dock:hover .player-transport,
+.player-transport-dock:focus-within .player-transport,
+.player-transport.is-active {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .transport-play {

@@ -80,7 +80,10 @@ export default function PlayerTransport({ videoRef, onUserControl }: Props) {
   const frac = duration > 0 ? Math.min(current / duration, 1) : 0;
 
   return (
-    <div className="player-transport">
+    <div className="player-transport-dock">
+      <div
+        className={`player-transport ${dragging ? "is-active" : ""}`}
+      >
       <button
         type="button"
         className="transport-play"
@@ -155,6 +158,7 @@ export default function PlayerTransport({ videoRef, onUserControl }: Props) {
       <span className="transport-time transport-duration">
         {formatTime(duration)}
       </span>
+      </div>
     </div>
   );
 }
