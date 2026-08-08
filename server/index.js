@@ -437,7 +437,7 @@ app.post("/api/manual", async (req, res) => {
       videoTitle ? `The viewer is watching a video titled "${videoTitle}".` : "",
       videoDescription ? `Video description: ${videoDescription}.` : "",
       "Use web search once to find ONE reputable public how-to guide for THIS exact topic.",
-      "Pick the most authoritative source for the subject: for repairs/DIY prefer iFixit, manufacturer service docs, or a well-known enthusiast guide; for cooking prefer Serious Eats, Just One Cookbook, BBC Good Food, or NYT Cooking; otherwise use an official or widely-trusted tutorial.",
+      "Pick the most authoritative source for the subject: for IKEA / furniture assembly prefer the official IKEA product assembly instructions or a clear desk-building guide that cites IKEA steps; for repairs/DIY prefer iFixit, manufacturer service docs, or a well-known enthusiast guide; for cooking prefer Serious Eats, Just One Cookbook, BBC Good Food, or NYT Cooking; otherwise use an official or widely-trusted tutorial.",
       "Return ONLY valid JSON matching this schema:",
       JSON.stringify({
         title: "string",
@@ -449,9 +449,12 @@ app.post("/api/manual", async (req, res) => {
         },
         steps: [{ n: 1, text: "short imperative step" }],
       }),
-      "Use as many steps as the task genuinely needs: minimum 2, maximum 10. Something trivial like opening a bottle takes 2-4; an involved repair takes 8-10.",
+      "Use as many steps as the task genuinely needs: minimum 2, maximum 10. Something trivial like opening a bottle takes 2-4; an involved repair or furniture assembly takes 8-10.",
       "Never pad with filler to reach a count, and never cram distinct actions into one step to stay under it.",
       "Rules: one short imperative sentence per step, no markdown, real https source URL relevant to the topic.",
+      /ikea|desk|furniture|assembly/i.test(topic)
+        ? "This is an assembly job: prefer ikea.com or the manufacturer's own pamphlet as the source."
+        : "",
     ]
       .filter(Boolean)
       .join("\n");

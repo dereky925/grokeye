@@ -66,7 +66,7 @@ function looksLikeEcho(heard: string, spoken: string) {
   const raw = heard.toLowerCase();
   // Fresh user commands should never be treated as speaker bleed.
   if (
-    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|tweets|feed|elon|musk|starship|spacex|youtube|watch|skip|rewind)\b/.test(
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop|play|spotify|bowie|music|pause|twitter|tweet|tweets|feed|elon|musk|starship|spacex|youtube|watch|skip|rewind|manual|ikea|desk|flip)\b/.test(
       raw,
     )
   ) {
@@ -589,19 +589,29 @@ export default function VideoPlayer({ video, onBack }: Props) {
           if (action.type !== "move_overlay") setTools(null);
 
           if (action.type === "open_manual") {
+            const ikeaPdf =
+              video.manualPdf ||
+              (video.id === "ikea" ? "/manuals/micke-desk.pdf" : undefined);
+            const ikeaPages =
+              video.manualPdfPages || (video.id === "ikea" ? 28 : undefined);
             const loading: ManualOverlayState = {
               doc: {
-                title: "Searching the web…",
-                topic: action.topic || heard,
+                title: ikeaPdf ? "Opening IKEA pamphlet…" : "Searching the web…",
+                // Placeholder only; the real topic may still need a vision call.
+                topic: action.topic || video.manualTopic || heard,
+                mode: ikeaPdf ? "pdf" : "steps",
+                pdfUrl: ikeaPdf,
                 source: {
-                  title: "Searching",
-                  url: "https://x.ai",
-                  siteName: "searching…",
+                  title: ikeaPdf ? "IKEA" : "Searching",
+                  url: ikeaPdf || "https://x.ai",
+                  siteName: ikeaPdf ? "ikea.com" : "searching…",
                 },
                 steps: [
                   {
                     n: 1,
-                    text: "Finding a trusted source and building steps…",
+                    text: ikeaPdf
+                      ? "Loading the official assembly pamphlet…"
+                      : "Finding a trusted source and building steps…",
                   },
                 ],
               },
@@ -616,7 +626,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
             // A live feed has no meaningful title, so never let it stand in as
             // the topic — that's how "open this water bottle" turned into a
             // guide for using the camera. Ask Grok to name what it sees instead.
-            let topic = action.topic;
+            let topic = action.topic || video.manualTopic;
             if (!topic && live && el) {
               const frame = captureFrame(el, { maxW: 1024, quality: 0.8 });
               topic = frame
@@ -628,10 +638,19 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
             const doc = await fetchManual({
               topic,
+              // A live feed's title describes the camera, not the subject.
               videoTitle: live ? undefined : video.title,
               videoDescription: live ? undefined : video.description,
+              manualPdf: ikeaPdf,
+              manualPdfPages: ikeaPages,
+              videoId: video.id,
             });
             if (sessionId !== sessionRef.current) return;
+            // Never fall back to word-summary steps when we have an official PDF.
+            if (ikeaPdf && doc.mode !== "pdf") {
+              doc.mode = "pdf";
+              doc.pdfUrl = ikeaPdf;
+            }
             const result = applyManualAction(manualRef.current, action, doc);
             setManual(result.state);
             manualRef.current = result.state;
@@ -875,6 +894,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
   });
 
   const { supported, micLive, interim, startCommand } = useGrokListener({
+    // Mute recognition while Grok is talking — browser STT will hear speakers otherwise.
     enabled: listenerEnabled,
     onSpeechStart: () => {
       setError(null);
