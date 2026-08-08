@@ -9,7 +9,7 @@ type ColorLabel = {
   score?: number;
 };
 
-type ColorProfile = {
+export type ColorProfile = {
   label: string;
   match: (h: number, s: number, v: number) => boolean;
   minArea: number;
@@ -37,7 +37,7 @@ const PROFILES: Record<string, ColorProfile> = {
   },
 };
 
-function rgbToHsv(r: number, g: number, b: number) {
+export function rgbToHsv(r: number, g: number, b: number) {
   const rn = r / 255;
   const gn = g / 255;
   const bn = b / 255;
@@ -56,7 +56,7 @@ function rgbToHsv(r: number, g: number, b: number) {
   return { h, s, v: max };
 }
 
-function profileForQuery(query: string): ColorProfile | null {
+export function profileForQuery(query: string): ColorProfile | null {
   const q = query.toLowerCase();
   if (/\b(salmon|sashimi)\b/.test(q)) return PROFILES.salmon;
   if (/\b(raw\s+)?fish\b/.test(q)) return PROFILES.fish;

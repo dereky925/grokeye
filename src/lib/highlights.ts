@@ -47,6 +47,125 @@ export function wantsHighlight(message: string): boolean {
   return false;
 }
 
+const TARGET_FILLER_TAIL =
+  /\s*(?:please|for\s+me|for\s+us|right\s+now|on\s+(?:the\s+)?screen|in\s+(?:the|this)\s+(?:video|clip|frame|scene|shot|picture))\s*$/;
+const TARGET_DEICTIC_ONLY =
+  /^(?:the\s+|my\s+|a\s+)?(?:this|that|it|these|those|one|thing|stuff|here|there)(?:\s+(?:one|thing|stuff))?$/;
+
+function cleanLocateTarget(raw: string): string | null {
+  let s = raw.trim();
+  // Leading modals leak in from "where would the rice be" style matches.
+  s = s.replace(/^(?:would|should|could|can|do(?:es)?|did|will|might)\s+/, "");
+  let prev = "";
+  while (prev !== s) {
+    prev = s;
+    s = s.replace(TARGET_FILLER_TAIL, "").replace(/[.?!,;:]+$/, "").trim();
+  }
+  if (s.length < 3 || !/[a-z]/.test(s)) return null;
+  if (TARGET_DEICTIC_ONLY.test(s)) return null;
+  if (s.split(/\s+/).length > 8) return null;
+  return s;
+}
+
+/**
+ * Pull the object noun phrase out of a highlight utterance so the grounding
+ * query reads "Locate: the fan cables" instead of the raw transcript. Returns
+ * null (caller falls back to the full utterance) whenever the phrasing isn't
+ * confidently matched — deictic asks ("where does this connect?") stay whole
+ * because the frame is the referent.
+ */
+export function extractLocateTarget(message: string): string | null {
+  let t = message
+    .toLowerCase()
+    .replace(/[’”]/g, "'")
+    .replace(/\bwhere'?s\b/g, "where is")
+    .replace(/\s+/g, " ")
+    .trim();
+  t = t.replace(/^(?:hey|ok|okay|yo|so|um+|uh+)[,\s]+/, "");
+  t = t.replace(/^grok[,\s]+/, "");
+  t = t.replace(/^(?:can|could|would|will)\s+you\s+(?:please\s+)?/, "");
+  t = t.replace(/^please\s+/, "");
+
+  let m = t.match(/\bwhere\s+(?:is|are|was|were)\s+(.+)$/);
+  if (m) return cleanLocateTarget(m[1]);
+  m = t.match(
+    /\bwhere\s+(?:do(?:es)?|should|would|can|will|did)\s+(.+?)\s+(?:go(?:es)?|connect(?:s)?|plug(?:s)?|attach(?:es)?|lead(?:s)?|belong(?:s)?|fit(?:s)?)\b/,
+  );
+  if (m) return cleanLocateTarget(m[1]);
+  m = t.match(
+    /\bwhere\s+(.+?)\s+(?:is|are|be|go(?:es)?|went|plugs?\s+in|connects?|attach(?:es)?|leads?|belongs?|fits?)\b/,
+  );
+  if (m) return cleanLocateTarget(m[1]);
+  m = t.match(
+    /\b(?:highlight|circle|outline|mark|annotate|label|call\s*out|find|locate|spot|point\s+(?:at|to|out))\s+(.+)$/,
+  );
+  if (m) return cleanLocateTarget(m[1]);
+  m = t.match(/\bshow\s+(?:(?:me|us)\s+)?(?!(?:me|us|where)\b)(.+)$/);
+  if (m) return cleanLocateTarget(m[1]);
+  m = t.match(/\bwhich\s+(?:one|thing)\s+is\s+(.+)$/);
+  if (m) return cleanLocateTarget(m[1]);
+  return null;
+}
+
+const ECHO_STOP_WORDS = new Set([
+  "the",
+  "this",
+  "that",
+  "these",
+  "those",
+  "one",
+  "thing",
+  "please",
+  "and",
+  "with",
+]);
+
+function echoStems(s: string): string[] {
+  const stems: string[] = [];
+  for (const w of s.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []) {
+    if (ECHO_STOP_WORDS.has(w)) continue;
+    stems.push(w.replace(/s$/, ""));
+  }
+  return stems;
+}
+
+/** True when two object phrasings plausibly name the same thing. */
+export function echoMatchesTarget(echo: string, target: string): boolean {
+  const a = echoStems(echo);
+  const b = echoStems(target);
+  if (!a.length || !b.length) return true;
+  for (const x of a) {
+    for (const y of b) {
+      if (x.startsWith(y) || y.startsWith(x)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Drop raw model labels whose "object" echo names something other than what
+ * the user asked for — a zero-latency wrong-object filter. Labels without an
+ * echo pass through; callers skip this entirely for link (route) answers,
+ * whose destination label legitimately names a different object.
+ */
+export function filterLabelsByEcho(
+  raw: unknown[],
+  target: string | null,
+): unknown[] {
+  if (!target) return raw;
+  return raw.filter((item) => {
+    if (!item || typeof item !== "object") return true;
+    const o = item as Record<string, unknown>;
+    const echo = typeof o.object === "string" ? o.object.trim() : "";
+    if (!echo) return true;
+    const text = typeof o.text === "string" ? o.text : "";
+    if (echoMatchesTarget(echo, target)) return true;
+    if (text && echoMatchesTarget(text, target)) return true;
+    console.warn(`[labels] dropping off-target box: "${echo}" for "${target}"`);
+    return false;
+  });
+}
+
 export function clamp01(n: number) {
   return Math.min(1, Math.max(0, n));
 }
@@ -74,6 +193,9 @@ export function normalizeLabels(
     if (x + w > 1) w = 1 - x;
     if (y + h > 1) h = 1 - y;
     if (w < 0.04 || h < 0.04) continue;
+    // A reticle covering most of the frame is never a tight object box —
+    // zones (work areas, spills) may legitimately be that large.
+    if (kind === "box" && w * h > 0.6) continue;
     out.push({ text, kind, x, y, w, h });
     if (out.length >= max) break;
   }
@@ -154,7 +276,7 @@ const FLOW_PATCH = 5; // odd
 const FLOW_SEARCH = 10;
 const FLOW_GRID = 2;
 
-function luma(
+export function luma(
   data: Uint8ClampedArray,
   width: number,
   height: number,
@@ -168,7 +290,7 @@ function luma(
 }
 
 /** Sobel magnitude for edge template matching. */
-function sobelMag(gray: Float32Array, w: number, h: number): Float32Array {
+export function sobelMag(gray: Float32Array, w: number, h: number): Float32Array {
   const out = new Float32Array(w * h);
   for (let y = 1; y < h - 1; y++) {
     for (let x = 1; x < w - 1; x++) {
@@ -275,39 +397,52 @@ function meanStd(a: Float32Array) {
   return { mean, std: Math.sqrt(v / a.length) + 1e-3 };
 }
 
-function nccAt(
+/** Nearest-neighbor resample of a pixel-space window into `out` (tw×th). */
+function sampleWindow(
   field: Float32Array,
   gw: number,
   gh: number,
-  tmpl: Float32Array,
+  x0: number,
+  y0: number,
+  bw: number,
+  bh: number,
   tw: number,
   th: number,
+  out: Float32Array,
+) {
+  for (let ty = 0; ty < th; ty++) {
+    for (let tx = 0; tx < tw; tx++) {
+      const sx = Math.min(
+        gw - 1,
+        Math.max(0, Math.floor(x0 + ((tx + 0.5) / tw) * bw)),
+      );
+      const sy = Math.min(
+        gh - 1,
+        Math.max(0, Math.floor(y0 + ((ty + 0.5) / th) * bh)),
+      );
+      out[ty * tw + tx] = field[sy * gw + sx];
+    }
+  }
+}
+
+/** NCC between a template (precomputed stats) and an equally-sized patch. */
+function nccOf(
+  tmpl: Float32Array,
   tStats: { mean: number; std: number },
-  px: number,
-  py: number,
+  patch: Float32Array,
 ): number {
-  if (px < 0 || py < 0 || px + tw > gw || py + th > gh) return -1;
+  const n = tmpl.length;
   let sum = 0;
-  let sumSq = 0;
-  for (let ty = 0; ty < th; ty++) {
-    const row = (py + ty) * gw + px;
-    for (let tx = 0; tx < tw; tx++) {
-      const g = field[row + tx];
-      sum += g;
-      sumSq += g * g;
-    }
-  }
-  const n = tw * th;
+  for (let i = 0; i < n; i++) sum += patch[i];
   const mean = sum / n;
-  const std = Math.sqrt(Math.max(0, sumSq / n - mean * mean)) + 1e-3;
   let cov = 0;
-  for (let ty = 0; ty < th; ty++) {
-    const row = (py + ty) * gw + px;
-    const trow = ty * tw;
-    for (let tx = 0; tx < tw; tx++) {
-      cov += (field[row + tx] - mean) * (tmpl[trow + tx] - tStats.mean);
-    }
+  let v = 0;
+  for (let i = 0; i < n; i++) {
+    const d = patch[i] - mean;
+    cov += (tmpl[i] - tStats.mean) * d;
+    v += d * d;
   }
+  const std = Math.sqrt(v / n) + 1e-3;
   return cov / (n * std * tStats.std);
 }
 
@@ -324,28 +459,37 @@ function fusedSearch(
   const gStats = meanStd(grayT);
   const eStats = meanStd(edgeT);
 
-  const bwPx = Math.max(tw, box.w * gw);
-  const bhPx = Math.max(th, box.h * gh);
-  const cx = (box.x + box.w / 2) * gw;
-  const cy = (box.y + box.h / 2) * gh;
+  // Candidate (x, y) is the box top-left; the window under it is resampled
+  // to the template size, so matching is scale-correct for any box size —
+  // templates were extracted the same way at seed time.
+  const bwPx = Math.min(gw, Math.max(4, box.w * gw));
+  const bhPx = Math.min(gh, Math.max(4, box.h * gh));
+  const bx = box.x * gw;
+  const by = box.y * gh;
   const padX = searchPad * gw;
   const padY = searchPad * gh;
 
-  const x0 = Math.max(0, Math.floor(cx - bwPx / 2 - padX));
-  const y0 = Math.max(0, Math.floor(cy - bhPx / 2 - padY));
-  const x1 = Math.min(gw - tw, Math.ceil(cx + bwPx / 2 + padX - tw));
-  const y1 = Math.min(gh - th, Math.ceil(cy + bhPx / 2 + padY - th));
+  const x0 = Math.max(0, Math.floor(bx - padX));
+  const y0 = Math.max(0, Math.floor(by - padY));
+  const x1 = Math.min(Math.floor(gw - bwPx), Math.ceil(bx + padX));
+  const y1 = Math.min(Math.floor(gh - bhPx), Math.ceil(by + padY));
   if (x1 < x0 || y1 < y0) return null;
 
+  const scratch = new Float32Array(tw * th);
+  const grayAt = (x: number, y: number, bw = bwPx, bh = bhPx) => {
+    sampleWindow(gray, gw, gh, x, y, bw, bh, tw, th, scratch);
+    return nccOf(grayT, gStats, scratch);
+  };
+
+  // Coarse grid first (cheap grayscale NCC only). Step scales with the box so
+  // large boxes don't explode the candidate count.
+  const coarse = Math.max(4, Math.round(Math.min(bwPx, bhPx) / 8));
   let best = -1;
   let bestX = x0;
   let bestY = y0;
-  // Coarse grid first (cheap grayscale NCC only).
-  const coarse = Math.max(3, Math.floor(Math.min(tw, th) / 5));
-
   for (let y = y0; y <= y1; y += coarse) {
     for (let x = x0; x <= x1; x += coarse) {
-      const nccG = nccAt(gray, gw, gh, grayT, tw, th, gStats, x, y);
+      const nccG = grayAt(x, y);
       if (nccG > best) {
         best = nccG;
         bestX = x;
@@ -356,24 +500,25 @@ function fusedSearch(
 
   // Fine refine — full fused score only in a small window.
   const refine = Math.max(coarse, 6);
+  const fineStep = coarse > 8 ? 2 : 1;
   let bestFused = -1;
   let fuseX = bestX;
   let fuseY = bestY;
 
-  for (let dy = -refine; dy <= refine; dy++) {
-    for (let dx = -refine; dx <= refine; dx++) {
+  for (let dy = -refine; dy <= refine; dy += fineStep) {
+    for (let dx = -refine; dx <= refine; dx += fineStep) {
       const x = bestX + dx;
       const y = bestY + dy;
       if (x < x0 || y < y0 || x > x1 || y > y1) continue;
-      if (x < 0 || y < 0 || x + tw > gw || y + th > gh) continue;
 
-      const nccG = nccAt(gray, gw, gh, grayT, tw, th, gStats, x, y);
+      const nccG = grayAt(x, y);
       if (nccG < 0.08) continue;
 
       // High-confidence gray match: skip expensive edge/hist (speed path).
       let score = nccG;
       if (nccG < 0.62) {
-        const nccE = nccAt(edges, gw, gh, edgeT, tw, th, eStats, x, y);
+        sampleWindow(edges, gw, gh, x, y, bwPx, bhPx, tw, th, scratch);
+        const nccE = nccOf(edgeT, eStats, scratch);
         const h = extractHist(rgba, gw, gh, x / gw, y / gh, box.w, box.h);
         const hs = histScore(hist, h);
         score = nccG * 0.5 + Math.max(0, nccE) * 0.25 + hs * 0.25;
@@ -389,13 +534,34 @@ function fusedSearch(
 
   if (bestFused < MIN_SCORE) return null;
 
-  const nx = clamp01(fuseX / gw);
-  const ny = clamp01(fuseY / gh);
+  // Small scale sweep around the winning position (center held) so the box
+  // can tighten or grow as the object recedes/approaches; the caller's size
+  // blend smooths the steps.
+  let bestScale = 1;
+  let bestScaleScore = grayAt(fuseX, fuseY);
+  for (const s of [0.92, 1.08]) {
+    const sw = bwPx * s;
+    const sh = bhPx * s;
+    const sx = fuseX + (bwPx - sw) / 2;
+    const sy = fuseY + (bhPx - sh) / 2;
+    if (sx < 0 || sy < 0 || sx + sw > gw || sy + sh > gh) continue;
+    const sc = grayAt(sx, sy, sw, sh);
+    // Require a clear margin so scale doesn't jitter frame to frame.
+    if (sc > bestScaleScore + 0.02) {
+      bestScaleScore = sc;
+      bestScale = s;
+    }
+  }
+
+  const w = Math.min(1, (bwPx * bestScale) / gw);
+  const h = Math.min(1, (bhPx * bestScale) / gh);
+  const nx = clamp01((fuseX + (bwPx - bwPx * bestScale) / 2) / gw);
+  const ny = clamp01((fuseY + (bhPx - bhPx * bestScale) / 2) / gh);
   return {
-    x: nx,
-    y: ny,
-    w: Math.min(box.w, 1 - nx),
-    h: Math.min(box.h, 1 - ny),
+    x: Math.min(nx, 1 - w),
+    y: Math.min(ny, 1 - h),
+    w,
+    h,
     score: bestFused,
   };
 }
@@ -596,7 +762,10 @@ export function createHighlightTracker(
     hist: extractHist(seed.data, gw, gh, l.x, l.y, l.w, l.h),
     tw: TEMPL,
     th: TEMPL,
-    score: 1,
+    // Start "unconfident" (score 0): the seed frame predates the boxes by the
+    // model round-trip, so the first tick searches with the wide lost-pad and
+    // can recover the accumulated playback motion instead of parking stale.
+    score: 0,
     misses: 0,
     colorLock: /\b(salmon|fish|sashimi)\b/i.test(l.text),
   }));
