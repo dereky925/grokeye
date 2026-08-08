@@ -7,6 +7,7 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { mountSpotifyRoutes, spotifyConfigured } from "./spotify.js";
 import { mountTwitterRoutes, twitterConfigured } from "./twitter.js";
+import { mountYoutubeRoutes, youtubeConfigured } from "./youtube.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,6 +27,7 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "12mb" }));
 mountSpotifyRoutes(app);
 mountTwitterRoutes(app);
+mountYoutubeRoutes(app);
 
 const manifestPath = path.join(root, "public", "videos", "manifest.json");
 const detectBase = process.env.DETECT_URL || "http://127.0.0.1:8790";
@@ -72,6 +74,7 @@ app.get("/api/health", async (_req, res) => {
     detector,
     spotify: { configured: spotifyConfigured() },
     twitter: { configured: twitterConfigured() },
+    youtube: { configured: true, hasApiKey: youtubeConfigured() },
   });
 });
 
