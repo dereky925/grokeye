@@ -27,6 +27,15 @@ const DIRECTIONS = new Set<GuidanceDirection>([
 /** Explicit requests for a visible hand/tool motion demonstration. */
 export function wantsMotionGuidance(message: string): boolean {
   const text = message.toLowerCase().replace(/[’]/g, "'").trim();
+  const placementQuestion =
+    /\bwhere\s+(?:(?:(?:do|should|can|would)\s+(?:i|we))|to)\s+(?:put|place|position|attach|fit|install|mount|build|assemble|connect|seat)\s+(?:this|that|the|these|those|my|our)\b/.test(
+      text,
+    ) ||
+    /\bwhere\s+(?:does|do|should)\s+(?:this|that|the|it|these|those|my|our)\b(?:\s+\w+){0,3}\s+(?:go|fit|attach|connect|mount|sit)\b/.test(
+      text,
+    );
+  if (placementQuestion) return true;
+
   const visibleReferent = /\b(this|that|it|these|those|here)\b/.test(text);
   if (!visibleReferent) return false;
 

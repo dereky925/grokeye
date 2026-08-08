@@ -242,6 +242,37 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     keywords: ["connector", "plug", "unplug", "disconnect", "harness", "tesla"],
   },
   {
+    id: "ikea-place-leg-frame",
+    videoId: "ikea",
+    start: 4,
+    end: 15,
+    previewAt: 6,
+    scene: "A white MICKE leg/end frame is held beside the open short end of the upside-down desktop panel.",
+    note: "Trace → place on the open end",
+    label: "Place the leg frame on this end",
+    mode: "morph",
+    outline:
+      "M 274 157 L 301 157 L 702 665 Q 710 678 697 691 L 677 687 L 276 181 Q 267 169 274 157 Z",
+    destination:
+      "M 516 352 L 536 346 L 760 648 Q 768 660 756 671 L 740 670 L 511 374 Q 503 361 516 352 Z",
+    motionPath: "M 486 414 C 536 430 581 465 632 515",
+    labelAt: [776, 526],
+    keywords: [
+      "leg",
+      "frame",
+      "side",
+      "upright",
+      "end",
+      "put",
+      "place",
+      "position",
+      "attach",
+      "build",
+      "assemble",
+      "install",
+    ],
+  },
+  {
     id: "ikea-seat-side-rail",
     videoId: "ikea",
     start: 15,
@@ -257,7 +288,21 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     motionPath: "M 604 253 C 632 244 660 234 691 222",
     detailPaths: ["M 329 302 A 7 7 0 1 0 329 316 A 7 7 0 1 0 329 302"],
     labelAt: [690, 280],
-    keywords: ["rail", "frame", "desk", "ikea", "align", "attach", "insert"],
+    keywords: [
+      "rail",
+      "leg",
+      "side",
+      "frame",
+      "desk",
+      "ikea",
+      "align",
+      "attach",
+      "insert",
+      "put",
+      "place",
+      "position",
+      "build",
+    ],
   },
 ];
 
@@ -282,7 +327,11 @@ export function findCatalogChoreography(
       currentTime < cue.end,
   );
   if (!matches.length) return null;
-  return matches
+  const best = matches
     .map((cue) => ({ cue, score: keywordScore(cue, message) }))
-    .sort((a, b) => b.score - a.score)[0].cue;
+    .sort((a, b) => b.score - a.score)[0];
+  // Named-object placement must agree with the authored subject. Purely
+  // deictic asks ("move this") may still use the only grounded scene cue.
+  const deictic = /\b(this|that|it|these|those|here)\b/i.test(message);
+  return best.score > 0 || deictic ? best.cue : null;
 }

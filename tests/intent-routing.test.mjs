@@ -119,6 +119,24 @@ test("explicit visible how-to requests trigger motion guidance", () => {
   }
 });
 
+test("visible part-placement questions trigger motion guidance", () => {
+  for (const message of [
+    "Where to build the leg?",
+    "Where do I put this leg?",
+    "Where should I place the leg?",
+    "Where does this leg go?",
+  ]) {
+    assert.equal(wantsMotionGuidance(message), true, message);
+  }
+  for (const message of [
+    "Where is the leg?",
+    "Where can I buy replacement legs?",
+    "How do I build an IKEA desk?",
+  ]) {
+    assert.equal(wantsMotionGuidance(message), false, message);
+  }
+});
+
 test("catalog motion wins over broad manual and ghost grammars", () => {
   for (const message of [
     "How do I bend it?",
@@ -136,6 +154,51 @@ test("catalog motion wins over broad manual and ghost grammars", () => {
     assert.equal(route?.kind, "catalog_motion", message);
     assert.equal(route?.cue.id, "plumbing-bend-copper", message);
   }
+});
+
+test("IKEA leg placement resolves to the authored scene at speech onset", () => {
+  for (const message of [
+    "Where to build the leg?",
+    "Where do I put this leg?",
+    "Where should I place the leg?",
+    "Where does this leg go?",
+  ]) {
+    const route = resolveInstructionRoute({
+      primary: message,
+      alternatives: [],
+      manualOpen: true,
+      toolsOpen: false,
+      videoId: "ikea",
+      currentTime: 6,
+    });
+    assert.equal(route?.kind, "catalog_motion", message);
+    assert.equal(route?.cue.id, "ikea-place-leg-frame", message);
+  }
+});
+
+test("IKEA placement stays object- and scene-grounded", () => {
+  assert.equal(
+    findCatalogChoreography("ikea", 6, "Where do the screws go?"),
+    null,
+  );
+  assert.equal(
+    findCatalogChoreography("ikea", 14.999, "Where do I put the leg?")?.id,
+    "ikea-place-leg-frame",
+  );
+  assert.equal(
+    findCatalogChoreography("ikea", 15, "Where do I put the leg?")?.id,
+    "ikea-seat-side-rail",
+  );
+
+  const general = resolveInstructionRoute({
+    primary: "How do I build an IKEA desk?",
+    alternatives: [],
+    manualOpen: false,
+    videoId: "ikea",
+    currentTime: 6,
+  });
+  assert.equal(general?.kind, "manual");
+  assert.equal(general?.action.type, "open_manual");
 });
 
 test("unknown visible motion avoids accidental manual opening", () => {
