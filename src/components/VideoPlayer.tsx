@@ -16,6 +16,7 @@ import {
   wantsHighlight,
   withLabelIds,
 } from "../lib/highlights";
+import { detectColorTargets } from "../lib/colorDetect";
 import {
   applyManualAction,
   fetchManual,
@@ -38,6 +39,40 @@ type Props = {
 const WAKE_DUCK = 0.035;
 const NORMAL_VOLUME = 1;
 
+/** Drop STT that is mostly Grok reading its own reply back into the mic. */
+function looksLikeEcho(heard: string, spoken: string) {
+  const raw = heard.toLowerCase();
+  // Fresh user commands should never be treated as speaker bleed.
+  if (
+    /\b(highlight|circle|outline|label|mark|point|show|find|where|open|next|previous|close|stop)\b/.test(
+      raw,
+    )
+  ) {
+    return false;
+  }
+
+  const a = raw
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+  const b = spoken
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
+  if (a.length < 3 || b.length < 3) return false;
+  const setB = new Set(b);
+  const overlap = a.filter((w) => setB.has(w)).length;
+  if (overlap / a.length >= 0.7) return true;
+  const heardJoin = a.join(" ");
+  const spokenJoin = b.join(" ");
+  if (heardJoin.length >= 18 && spokenJoin.includes(heardJoin)) return true;
+  if (spokenJoin.length >= 18 && heardJoin.includes(spokenJoin.slice(0, 48))) {
+    return true;
+  }
+  return false;
+}
+
 export default function VideoPlayer({ video, onBack }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -57,13 +92,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [highlightLinks, setHighlightLinks] = useState<HighlightLink[]>([]);
   const [scanning, setScanning] = useState(false);
   const [holdUntil, setHoldUntil] = useState<number | null>(null);
+  const [detecting, setDetecting] = useState(false);
   const voiceBusy = phase !== "idle";
 
   useEffect(() => {
     manualRef.current = manual;
   }, [manual]);
 
+  const [micArmed, setMicArmed] = useState(true);
   const [listenActivity, setListenActivity] = useState(0);
+  const lastSpokenRef = useRef("");
+  const rearmTimerRef = useRef<number | null>(null);
 
   const speechLevel = useSpeechLevel({
     activity: phase === "listening" ? listenActivity : 0,
@@ -77,35 +116,115 @@ export default function VideoPlayer({ video, onBack }: Props) {
     }
   }, []);
 
+  const armMicSoon = useCallback((delayMs = 850) => {
+    if (rearmTimerRef.current != null) {
+      window.clearTimeout(rearmTimerRef.current);
+    }
+    setMicArmed(false);
+    rearmTimerRef.current = window.setTimeout(() => {
+      setMicArmed(true);
+      rearmTimerRef.current = null;
+    }, delayMs);
+  }, []);
+
   const clearHighlights = useCallback(() => {
     setHighlights([]);
     setHighlightLinks([]);
+    setDetecting(false);
     setHoldUntil(null);
     highlightHoldRef.current = false;
     // Mid-turn clears leave the frame frozen; the turn's own exit resumes it.
     if (!turnInFlightRef.current) resumeIfAutoPaused();
   }, [resumeIfAutoPaused]);
 
-  const playSpoken = useCallback(async (text: string, sessionId: number) => {
-    setReply(text);
-    setPhase("speaking");
-    const audioUrl = await speakText(text);
+  const stopTts = useCallback(() => {
+    const audio = audioRef.current as
+      | (HTMLAudioElement & { __resolveSpeak?: () => void })
+      | null;
+    if (!audio) return;
+    const resolve = audio.__resolveSpeak;
+    audio.__resolveSpeak = undefined;
+    audio.onended = null;
+    audio.onerror = null;
+    audio.pause();
+    audioRef.current = null;
+    setTtsAudio(null);
+    resolve?.();
+  }, []);
+
+  const interruptGrok = useCallback(() => {
+    sessionRef.current += 1;
+    stopTts();
+    setDetecting(false);
+    setScanning(false);
+    setHoldUntil(null);
+    highlightHoldRef.current = false;
+    turnInFlightRef.current = false;
+    setError(null);
+    setReply("");
+    setTranscript("");
+    setUsedVision(false);
+    setPhase("idle");
+    if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
+    resumeIfAutoPaused();
+    armMicSoon(350);
+  }, [armMicSoon, resumeIfAutoPaused, stopTts]);
+
+  const canInterrupt =
+    detecting ||
+    scanning ||
+    phase === "thinking" ||
+    phase === "speaking" ||
+    phase === "error";
+
+  const playAudioUrl = useCallback(async (audioUrl: string, sessionId: number) => {
     if (sessionId !== sessionRef.current) {
       URL.revokeObjectURL(audioUrl);
       return;
     }
-    const audio = new Audio(audioUrl);
+    stopTts();
+    const audio = new Audio(audioUrl) as HTMLAudioElement & {
+      __resolveSpeak?: () => void;
+    };
     audioRef.current = audio;
     setTtsAudio(audio);
     await new Promise((r) => requestAnimationFrame(() => r(null)));
     await new Promise((r) => requestAnimationFrame(() => r(null)));
-    await new Promise<void>((resolve, reject) => {
-      audio.onended = () => resolve();
-      audio.onerror = () => reject(new Error("Could not play voice reply"));
-      audio.play().catch(reject);
-    });
-    URL.revokeObjectURL(audioUrl);
-  }, []);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const done = () => {
+          audio.__resolveSpeak = undefined;
+          resolve();
+        };
+        audio.__resolveSpeak = done;
+        audio.onended = done;
+        audio.onerror = () => reject(new Error("Could not play voice reply"));
+        audio.play().catch(reject);
+      });
+    } finally {
+      URL.revokeObjectURL(audioUrl);
+      if (audioRef.current === audio) {
+        audioRef.current = null;
+        setTtsAudio(null);
+      }
+    }
+  }, [stopTts]);
+
+  const playSpoken = useCallback(
+    async (text: string, sessionId: number) => {
+      lastSpokenRef.current = text;
+      setMicArmed(false);
+      setReply(text);
+      setPhase("speaking");
+      const audioUrl = await speakText(text);
+      if (sessionId !== sessionRef.current) {
+        URL.revokeObjectURL(audioUrl);
+        return;
+      }
+      await playAudioUrl(audioUrl, sessionId);
+    },
+    [playAudioUrl],
+  );
 
   const handleQuestion = useCallback(
     async (heard: string) => {
@@ -183,12 +302,13 @@ export default function VideoPlayer({ video, onBack }: Props) {
         let frames: string[] = [];
         let currentTime = el?.currentTime || 0;
         let duration = el && Number.isFinite(el.duration) ? el.duration : 0;
+        let precomputed: Omit<HighlightLabel, "id">[] = [];
 
         if (wantFrames && el) {
           // Video froze at speech onset, so this is the frame the user reacted to.
           const frame = captureFrame(
             el,
-            highlight ? { maxW: 768, quality: 0.62 } : undefined,
+            highlight ? { maxW: 512, quality: 0.55 } : undefined,
           );
           if (frame) frames = [frame];
         }
@@ -198,11 +318,52 @@ export default function VideoPlayer({ video, onBack }: Props) {
           setHighlightLinks([]);
           setHoldUntil(null);
           highlightHoldRef.current = false;
+          setDetecting(true);
+
+          // Lightest path: salmon/fish color blob on-device (no model).
+          if (el) {
+            const colorHits = detectColorTargets(el, heard);
+            if (colorHits.length) {
+              precomputed = normalizeLabels(colorHits);
+              if (precomputed.length) {
+                highlightHoldRef.current = true;
+                setHighlights(withLabelIds(precomputed));
+              }
+            }
+          }
+
+          if (!precomputed.length && frames[0]) {
+            try {
+              const detectRes = await fetch("/api/detect", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  image: frames[0],
+                  pack: video.detectorPack || "sushi",
+                  query: heard,
+                  max_detections: 2,
+                }),
+              });
+              const detectData = await detectRes.json();
+              if (sessionId !== sessionRef.current) return;
+              if (detectRes.ok) {
+                precomputed = normalizeLabels(detectData.labels);
+                if (precomputed.length) {
+                  highlightHoldRef.current = true;
+                  setHighlights(withLabelIds(precomputed));
+                }
+              }
+            } catch (err) {
+              console.warn("[detect] client path failed", err);
+            }
+          }
+
+          setDetecting(false);
         }
 
-        // Boxes ride a parallel labels-only call so they paint while the
-        // spoken reply is still generating.
-        if (highlight && frames.length) {
+        // No detector hit — Grok boxes ride a parallel labels-only call so
+        // they paint while the spoken reply is still generating.
+        if (highlight && !precomputed.length && frames.length) {
           setScanning(true);
           void fetchLabels({
             message: heard,
@@ -231,40 +392,33 @@ export default function VideoPlayer({ video, onBack }: Props) {
           duration,
           frames,
           lowDetail: highlight,
+          // Detector boxes ride along so Grok narrates them as authoritative;
+          // Grok-box turns get geometry from the parallel /api/labels call.
+          detections: precomputed.length ? precomputed : undefined,
+          detectorPack: video.detectorPack || "sushi",
         });
 
         if (sessionId !== sessionRef.current) {
+          setDetecting(false);
           void result.audioPromise.then((url) => URL.revokeObjectURL(url));
           return;
         }
 
         setReply(result.reply);
+        lastSpokenRef.current = result.reply;
+        setMicArmed(false);
         setPhase("speaking");
 
         const audioUrl = await result.audioPromise;
-        if (sessionId !== sessionRef.current) {
-          URL.revokeObjectURL(audioUrl);
-          return;
-        }
-
-        const audio = new Audio(audioUrl);
-        audioRef.current = audio;
-        setTtsAudio(audio);
-        await new Promise((r) => requestAnimationFrame(() => r(null)));
-        await new Promise((r) => requestAnimationFrame(() => r(null)));
-        await new Promise<void>((resolve, reject) => {
-          audio.onended = () => resolve();
-          audio.onerror = () => reject(new Error("Could not play voice reply"));
-          audio.play().catch(reject);
-        });
-        URL.revokeObjectURL(audioUrl);
+        await playAudioUrl(audioUrl, sessionId);
 
         // Callouts breathe ~2s past the voice, then fade and the video resumes.
-        if (highlightHoldRef.current) {
+        if (sessionId === sessionRef.current && highlightHoldRef.current) {
           setHoldUntil(performance.now() + 2000);
         }
       } catch (err) {
         if (sessionId !== sessionRef.current) return;
+        setDetecting(false);
         setError(err instanceof Error ? err.message : "Voice session failed");
         setPhase("error");
         setScanning(false);
@@ -284,15 +438,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
           if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
           // Placed callouts extend the freeze; clearHighlights resumes later.
           if (!highlightHoldRef.current) resumeIfAutoPaused();
+          armMicSoon(900);
         }
       }
     },
-    [playSpoken, resumeIfAutoPaused, video.description, video.title],
+    [armMicSoon, playAudioUrl, playSpoken, resumeIfAutoPaused, video.description, video.detectorPack, video.title],
   );
 
   const { supported, micLive, interim, startCommand, cancelCommand } =
     useGrokListener({
-      enabled: phase === "idle" || phase === "listening",
+      // Mute recognition while Grok is talking — browser STT will hear speakers otherwise.
+      enabled: micArmed && (phase === "idle" || phase === "listening"),
       onSpeechStart: () => {
         setError(null);
         setReply("");
@@ -310,6 +466,14 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
       },
       onQuestion: (text) => {
+        if (looksLikeEcho(text, lastSpokenRef.current)) {
+          console.log("[voice] ignoring likely TTS echo:", text);
+          setPhase("idle");
+          setTranscript("");
+          if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
+          resumeIfAutoPaused();
+          return;
+        }
         void handleQuestion(text);
       },
     });
@@ -342,6 +506,13 @@ export default function VideoPlayer({ video, onBack }: Props) {
   }, [interim, transcript, phase]);
 
   useEffect(() => {
+    return () => {
+      if (rearmTimerRef.current != null) {
+        window.clearTimeout(rearmTimerRef.current);
+      }
+    };
+  }, []);
+  useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
     if (phase === "idle") el.volume = WAKE_DUCK;
@@ -357,33 +528,43 @@ export default function VideoPlayer({ video, onBack }: Props) {
   }, [video.src]);
 
   useEffect(() => {
+    const isEditableTarget = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      return Boolean(
+        el &&
+          (el.tagName === "INPUT" ||
+            el.tagName === "TEXTAREA" ||
+            el.isContentEditable),
+      );
+    };
+
+    const scrubBy = (delta: number) => {
+      const el = videoRef.current;
+      if (!el) return;
+      const duration = Number.isFinite(el.duration) ? el.duration : 0;
+      const next = Math.min(Math.max(0, el.currentTime + delta), duration || Infinity);
+      el.currentTime = next;
+    };
+
     const onKey = (event: KeyboardEvent) => {
+      if (isEditableTarget(event.target)) return;
+
       if (event.code === "KeyG" && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        const target = event.target as HTMLElement | null;
-        if (
-          target &&
-          (target.tagName === "INPUT" ||
-            target.tagName === "TEXTAREA" ||
-            target.isContentEditable)
-        ) {
-          return;
-        }
         if (phase === "idle") {
           event.preventDefault();
           startCommand();
         }
         return;
       }
-      if (event.code !== "Space") return;
-      const target = event.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
+
+      if (event.code === "ArrowLeft" || event.code === "ArrowRight") {
+        event.preventDefault();
+        const step = event.shiftKey ? 1 : 5;
+        scrubBy(event.code === "ArrowLeft" ? -step : step);
         return;
       }
+
+      if (event.code !== "Space") return;
       event.preventDefault();
       const el = videoRef.current;
       if (!el) return;
@@ -466,6 +647,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
             else setHighlights(next);
           }}
         />
+        {detecting && (
+          <div className="detect-status" role="status" aria-live="polite">
+            <span className="detect-status-spinner" aria-hidden />
+            <span>Finding it…</span>
+          </div>
+        )}
       </div>
 
       {manual && (
@@ -494,6 +681,18 @@ export default function VideoPlayer({ video, onBack }: Props) {
         level={speechLevel}
         usedVision={usedVision}
       />
+
+      {canInterrupt && (
+        <button
+          type="button"
+          className="interrupt-btn"
+          onClick={interruptGrok}
+          title="Stop Grok"
+        >
+          <span className="interrupt-icon" aria-hidden />
+          Stop
+        </button>
+      )}
     </div>
   );
 }

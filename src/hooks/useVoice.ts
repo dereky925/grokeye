@@ -349,6 +349,9 @@ export async function askGrok(input: {
   frames?: string[];
   wantLabels?: boolean;
   lowDetail?: boolean;
+  detectorPack?: string;
+  /** Precomputed detector boxes — Grok narrates only, no second detect. */
+  detections?: Array<{ text: string; x: number; y: number; w: number; h: number }>;
 }) {
   const chatRes = await fetch("/api/chat", {
     method: "POST",

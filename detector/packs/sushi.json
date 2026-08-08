@@ -1,0 +1,41 @@
+{
+  "id": "sushi",
+  "model": "yolov8n.pt",
+  "kind": "yolo",
+  "fallback_model": "yolov8n-worldv2.pt",
+  "fallback_kind": "world",
+  "fallback_imgsz": 416,
+  "default_classes": [
+    "person",
+    "knife",
+    "bowl",
+    "spoon",
+    "fork",
+    "cup",
+    "bottle",
+    "wine glass",
+    "dining table",
+    "carrot",
+    "broccoli",
+    "banana",
+    "apple",
+    "orange",
+    "sandwich"
+  ],
+  "open_classes": [
+    "salmon",
+    "raw salmon",
+    "fish",
+    "rice",
+    "sushi rice",
+    "nori",
+    "avocado",
+    "cucumber",
+    "hand",
+    "knife",
+    "sushi roll"
+  ],
+  "conf": 0.2,
+  "iou": 0.45,
+  "imgsz": 320
+}

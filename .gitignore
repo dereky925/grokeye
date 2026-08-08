@@ -11,3 +11,9 @@ dist
 
 AGENTS.md
 CLAUDE.md
+
+detector/.venv
+detector/**/__pycache__
+*.pt
+*.onnx
+.ultralytics
