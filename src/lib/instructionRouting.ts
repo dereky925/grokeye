@@ -3,13 +3,13 @@ import {
   findCatalogChoreography,
   type CatalogMotionCue,
 } from "./choreography";
-import { wantsGhost } from "./ghost";
+import { wantsGhost, wantsNextDemo } from "./ghost";
 import { wantsMotionGuidance } from "./guidance";
 import { parseManualAction, type ManualAction } from "./manual";
 
 export type InstructionRoute =
   | { kind: "catalog_motion"; utterance: string; cue: CatalogMotionCue }
-  | { kind: "ghost"; utterance: string }
+  | { kind: "ghost"; utterance: string; next?: boolean }
   | { kind: "manual"; action: Exclude<ManualAction, null> }
   | { kind: "motion"; utterance: string }
   | null;
@@ -46,6 +46,13 @@ export function resolveInstructionRoute({
         .filter(Boolean),
     ),
   );
+  // "Animate what I do next" is the most specific ask — it names the script's
+  // next action, not a visible object, so no other grammar can serve it.
+  const nextDemoUtterance = candidates.find(wantsNextDemo);
+  if (nextDemoUtterance) {
+    return { kind: "ghost", utterance: nextDemoUtterance, next: true };
+  }
+
   const motionUtterance = candidates.find(wantsMotionGuidance);
 
   if (motionUtterance) {

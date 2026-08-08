@@ -691,6 +691,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
               frame,
               videoTitle: video.title,
               stepText: m ? m.doc.steps[m.stepIndex]?.text : undefined,
+              videoId: video.id,
+              currentTime: el.currentTime ?? turnTime,
+              wantNext: instructionRoute.next,
             });
           } catch (err) {
             clearGhost();
@@ -818,30 +821,30 @@ export default function VideoPlayer({ video, onBack }: Props) {
               doc.mode = "pdf";
               doc.pdfUrl = ikeaPdf;
             }
-            const result = applyManualAction(manualRef.current, action, doc);
+            // Panel-only: the steps overlay IS the response. No readout, no
+            // reply bubble — drop straight back to listening. Timestamped docs
+            // open on the step the playhead is in.
+            const result = applyManualAction(
+              manualRef.current,
+              action,
+              doc,
+              el?.currentTime ?? turnTime,
+            );
             setManual(result.state);
             manualRef.current = result.state;
-            if (result.speak) {
-              try {
-                await playSpoken(result.speak, sessionId);
-              } catch {
-                /* overlay and visible reply already updated */
-              }
-            }
             return;
           }
 
-          const result = applyManualAction(manualRef.current, action);
+          // Panel-only for step navigation and moves too. The playhead feeds
+          // "switch to my current step" on timestamped manuals.
+          const result = applyManualAction(
+            manualRef.current,
+            action,
+            undefined,
+            el?.currentTime ?? turnTime,
+          );
           setManual(result.state);
           manualRef.current = result.state;
-          // Read steps aloud; keep panel moves silent.
-          if (result.speak && action.type !== "move_overlay") {
-            try {
-              await playSpoken(result.speak, sessionId);
-            } catch {
-              /* overlay and visible reply already updated */
-            }
-          }
           return;
         }
 
@@ -1253,6 +1256,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
               message: heard,
               videoTitle: video.title,
               videoDescription: video.description,
+              videoId: video.id,
               currentTime,
               duration,
               frames,

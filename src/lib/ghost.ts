@@ -44,11 +44,41 @@ export function wantsGhost(message: string): boolean {
   return motionVerb && deictic && asking;
 }
 
+/**
+ * "Animate what I should do next" — a ghost demo aimed at the NEXT action
+ * rather than an object the user pointed at. Only meaningful on clips with an
+ * authored script; the server resolves what "next" is from the playhead.
+ *
+ * Deliberately narrower than wantsGhost: a demo verb plus a forward-looking
+ * phrase. Bare "next step" stays with the manual pager.
+ */
+export function wantsNextDemo(message: string): boolean {
+  const t = message.toLowerCase().replace(/[’”']/g, "'");
+  if (/\b(panel|pane|overlay|volume|louder|quieter|mute)\b/.test(t)) {
+    return false;
+  }
+  const demoVerb =
+    /\b(animate|demonstrate|act out|play out|preview|show me|walk me through)\b/.test(
+      t,
+    );
+  const forward =
+    /\b(what (to do|i (should |need to )?do|comes?|happens?) next|what'?s next|next (move|action|bit|part)|the next step looks like|how to do the next (step|part|bit|one))\b/.test(
+      t,
+    ) || /\banimate\b[^.?!]*\bnext\b/.test(t);
+  return demoVerb && forward;
+}
+
 export async function fetchGhost(input: {
   question: string;
   frame: string;
   videoTitle?: string;
   stepText?: string;
+  /** Catalog id — lets the server ground the demo in the authored script. */
+  videoId?: string;
+  /** Playhead seconds, for resolving "next" against the script timeline. */
+  currentTime?: number;
+  /** Plan the script's NEXT action instead of an object in the question. */
+  wantNext?: boolean;
 }): Promise<{
   label: string;
   caption: string;

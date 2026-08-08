@@ -1,0 +1,94 @@
+{
+  "videoId": "pov-pc-build-fail",
+  "title": "First PC Build — CPU install and AIO prep (novice)",
+  "task": "building a first gaming PC: installing the CPU and preparing a Corsair AIO liquid cooler",
+  "source": {
+    "title": "First time building a PC (GoPro POV)",
+    "url": "https://www.youtube.com/watch?v=XA49aDWS9vM",
+    "siteName": "youtube.com",
+    "creator": "Kitze"
+  },
+  "setting": "Home office. A Gigabyte Z390 AORUS MASTER motherboard lies on a red towel over a desk. Accessory bags, a box cutter, and a Manfrotto tripod share the workspace. The build uses an Intel LGA1151 CPU, a Corsair 280mm AIO (H115i PLATINUM class, two ML140 fans), and a gray mid-tower case. Head-cam POV with two brief tripod cutaways.",
+  "segments": [
+    {
+      "start": 0,
+      "end": 3,
+      "action": "Installs the CPU into the motherboard socket",
+      "detail": "Takes the Intel CPU from its clamshell with bare fingers, lowers it into the open LGA1151 socket on the Z390 AORUS MASTER, nudges it flat with fingertips, then presses around the socket working the retention hardware.",
+      "flags": [
+        "No ESD strap; the board sits on a towel over a static-prone workspace.",
+        "Bare fingers over the heat spreader and socket area.",
+        "Presses on the CPU directly instead of letting the load plate seat it."
+      ]
+    },
+    {
+      "start": 3,
+      "end": 3.5,
+      "action": "Shows the Corsair AIO box to the tripod camera",
+      "detail": "Brief third-person cutaway: grinning, holding up the yellow-and-black Corsair liquid-cooler box (H115i PLATINUM class) beside the motherboard.",
+      "flags": []
+    },
+    {
+      "start": 3.5,
+      "end": 5.5,
+      "action": "Sorts the AIO mounting hardware and fits the backplate",
+      "detail": "Holds the Intel X-shaped pump mounting bracket over the board while reading the printed Corsair instruction leaflet, then flips the motherboard face-down on the towel and fits the cooler backplate behind the CPU socket.",
+      "flags": [
+        "Flips the board components-down directly onto the towel."
+      ]
+    },
+    {
+      "start": 5.5,
+      "end": 7.5,
+      "action": "Opens up the case and carries it to the bench",
+      "detail": "Third-person beat at the open gray mid-tower holding a screwdriver, then POV carrying and tilting the opened case across the room toward the desk, interior exposed.",
+      "flags": []
+    },
+    {
+      "start": 7.5,
+      "end": 10.5,
+      "action": "Mounts both fans on the radiator and connects their leads",
+      "detail": "Joins the small keyed fan-lead connectors above the 280mm radiator, then drives screws through the two Corsair ML140 fans into the radiator with a screwdriver. Loose black screws sit piled on the towel.",
+      "flags": [
+        "Screws are loose on the towel rather than in their bag or a tray."
+      ]
+    },
+    {
+      "start": 10.5,
+      "end": 12,
+      "action": "Works out the pump and tube orientation against the case",
+      "detail": "Grips the sleeved AIO tubes and pump block near the case edge, turning the assembly to figure out which way the radiator and tubes should face.",
+      "flags": []
+    },
+    {
+      "start": 12,
+      "end": 14.5,
+      "action": "Digs through a drawer for cables and hardware",
+      "detail": "Opens a desk drawer of organized cable bins and picks through it while the finished radiator-and-fan assembly rests on the towel, its cables sprawled out.",
+      "flags": [
+        "Fan and pump cables are left tangled across the workspace."
+      ]
+    },
+    {
+      "start": 14.5,
+      "end": 17,
+      "action": "Offers the AIO up into the case to check fit",
+      "detail": "Hoists the opened case and its vented top frame overhead with one hand while the pump block hangs from the tubes in the other, test-fitting where the 280mm radiator will mount.",
+      "flags": [
+        "The pump dangles by its tubes.",
+        "The case is held overhead one-handed with parts inside."
+      ]
+    }
+  ],
+  "steps": [
+    { "n": 1, "at": 0, "text": "Take the CPU from its clamshell and lower it into the open socket, matching the alignment notches." },
+    { "n": 2, "at": 2, "text": "Close the socket load plate and latch the retention arm over the CPU." },
+    { "n": 3, "at": 3.5, "text": "Read the cooler leaflet and pick out the Intel mounting bracket and backplate." },
+    { "n": 4, "at": 4.5, "text": "Flip the board and seat the cooler backplate behind the CPU socket." },
+    { "n": 5, "at": 7.5, "text": "Screw both fans onto the radiator and connect their leads." },
+    { "n": 6, "at": 10.5, "text": "Turn the pump and tubes against the case to settle the radiator orientation." },
+    { "n": 7, "at": 12, "text": "Gather the cables and screws you need before anything goes into the case." },
+    { "n": 8, "at": 14.5, "text": "Offer the radiator and pump up into the case to confirm the fit." }
+  ],
+  "afterClip": "Mount the radiator into the case top with the fans screwed through the tray, bolt the pump block onto the CPU using the X bracket over the pre-applied paste, then install the motherboard in the case, add RAM, GPU, and PSU, and connect front-panel, fan, and pump headers before first boot."
+}

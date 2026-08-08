@@ -21,6 +21,7 @@ export type ManualAction =
   | { type: "goto_step"; step: number }
   | { type: "move_overlay"; snap: OverlaySnap; target: OverlayTarget }
   | { type: "read_step" }
+  | { type: "current_step" }
   | null;
 
 const NUM_WORDS: Record<string, number> = {
@@ -331,6 +332,19 @@ export function parseManualAction(
     return { type: "prev_step" };
   }
 
+  // Snap the panel to whatever step the playhead is on (timestamped manuals).
+  // Parsed before goto/read so "switch to my current step" never falls through.
+  if (
+    /\b(switch|go|jump|skip|sync|catch|take|bring|match|snap)\b[^.?!]*\b(current|actual|present) (step|page|one)\b/.test(
+      t,
+    ) ||
+    /\bsync (the )?(steps?|manual|guide|pages?)\b/.test(t) ||
+    /\b(what|which) (step|page) (am i|are we) (on|at)\b/.test(t) ||
+    /\b(step|page) (for|at) (this|the current) (point|time|moment|part)\b/.test(t)
+  ) {
+    return { type: "current_step" };
+  }
+
   const goto = t.match(
     /\b(?:go to|goto|jump to|skip to|show(?: me)?|read|flip to)?\s*(?:step|page)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
   );
@@ -350,10 +364,32 @@ export function parseManualAction(
   return null;
 }
 
+/**
+ * Index of the step the playhead is inside: the last step whose `at` timestamp
+ * has been reached. Null when the doc's steps carry no timestamps.
+ */
+export function stepIndexAtTime(
+  doc: ManualDoc,
+  currentTime: number,
+): number | null {
+  if (!Number.isFinite(currentTime)) return null;
+  let idx: number | null = null;
+  for (let i = 0; i < doc.steps.length; i++) {
+    const at = doc.steps[i].at;
+    if (typeof at !== "number") continue;
+    if (at <= currentTime + 0.001) idx = i;
+    else break;
+  }
+  // Before the first timestamped step still counts as being on it.
+  if (idx == null && doc.steps.some((s) => typeof s.at === "number")) return 0;
+  return idx;
+}
+
 export function applyManualAction(
   state: ManualOverlayState | null,
   action: Exclude<ManualAction, null>,
   doc?: ManualDoc,
+  currentTime?: number,
 ): { state: ManualOverlayState | null; speak: string } {
   const pageWord = (d: ManualDoc | undefined) =>
     d?.mode === "pdf" ? "Page" : "Step";
@@ -363,9 +399,13 @@ export function applyManualAction(
       if (!doc) {
         return { state, speak: "I couldn't load a manual." };
       }
+      // Timestamped (authored) manuals open on the step the playhead is in —
+      // mid-video "pull up the steps" lands where the viewer actually is.
+      const syncedIndex =
+        currentTime != null ? stepIndexAtTime(doc, currentTime) : null;
       const next: ManualOverlayState = {
         doc,
-        stepIndex: 0,
+        stepIndex: syncedIndex ?? 0,
         x: state?.x ?? 24,
         y: state?.y ?? 96,
       };
@@ -468,6 +508,22 @@ export function applyManualAction(
           state.doc.mode === "pdf"
             ? `${label} ${state.stepIndex + 1} of ${state.doc.steps.length}.`
             : `${label} ${state.stepIndex + 1} of ${state.doc.steps.length}: ${step.text}`,
+      };
+    }
+    case "current_step": {
+      if (!state) return { state, speak: "No manual is open." };
+      if (state.loading) {
+        return { state, speak: "Still loading the guide — one sec." };
+      }
+      const idx = stepIndexAtTime(state.doc, currentTime ?? NaN);
+      if (idx == null) {
+        return { state, speak: "This guide isn't synced to the video." };
+      }
+      const step = state.doc.steps[idx];
+      const label = pageWord(state.doc);
+      return {
+        state: { ...state, stepIndex: idx },
+        speak: `${label} ${idx + 1} of ${state.doc.steps.length}: ${step?.text ?? ""}`.trim(),
       };
     }
     default:
@@ -580,7 +636,9 @@ export async function fetchManual(input: {
   }
 
   // v2 drops manuals cached back when every guide was padded to 6 steps.
-  const cacheKey = `grokeye-manual:v2:${topic.toLowerCase()}`;
+  // videoId in the key keeps authored per-clip scripts from colliding with a
+  // web manual cached under the same topic.
+  const cacheKey = `grokeye-manual:v2:${input.videoId || ""}:${topic.toLowerCase()}`;
 
   try {
     const cached = localStorage.getItem(cacheKey);

@@ -550,6 +550,8 @@ export async function askGrok(input: {
   message: string;
   videoTitle?: string;
   videoDescription?: string;
+  /** Catalog id — unlocks the authored shot-by-shot script on the server. */
+  videoId?: string;
   currentTime?: number;
   duration?: number;
   frames?: string[];

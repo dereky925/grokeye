@@ -48,6 +48,8 @@ export type TaskSession = {
 export type ManualStep = {
   n: number;
   text: string;
+  /** Clip timestamp (seconds) where this step happens — authored scripts only. */
+  at?: number;
 };
 
 export type ManualSource = {

@@ -30,6 +30,67 @@ mountTwitterRoutes(app);
 mountYoutubeRoutes(app);
 
 const manifestPath = path.join(root, "public", "videos", "manifest.json");
+
+/**
+ * Authored shot-by-shot scripts for catalog clips (server/scripts/*.json),
+ * keyed by videoId. A script is ground truth for what the person in the clip
+ * actually did: /api/manual serves its steps instead of a web-searched guide,
+ * and /api/chat uses its timeline to answer "what should I do next".
+ */
+const videoScripts = new Map();
+{
+  const scriptsDir = path.join(__dirname, "scripts");
+  if (fs.existsSync(scriptsDir)) {
+    for (const file of fs.readdirSync(scriptsDir)) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const doc = JSON.parse(fs.readFileSync(path.join(scriptsDir, file), "utf8"));
+        if (doc?.videoId && Array.isArray(doc.segments)) {
+          videoScripts.set(doc.videoId, doc);
+        }
+      } catch (err) {
+        console.warn(`[scripts] skipping ${file}:`, err.message);
+      }
+    }
+    if (videoScripts.size) {
+      console.log(`[scripts] loaded: ${[...videoScripts.keys()].join(", ")}`);
+    }
+  }
+}
+
+/** Compact plain-text timeline block for prompts. */
+function scriptTimeline(script) {
+  return script.segments
+    .map((s) => `${s.start}s-${s.end}s: ${s.action}. ${s.detail}`)
+    .join("\n");
+}
+
+/**
+ * Prompt context pinned to the playhead: what is happening now, what already
+ * happened, and what the script says comes next.
+ */
+function scriptContextAt(script, currentTime) {
+  const t = Number.isFinite(currentTime) ? currentTime : 0;
+  const segs = script.segments;
+  const idx = segs.findIndex((s) => t >= s.start && t < s.end);
+  const current = idx >= 0 ? segs[idx] : t >= segs[segs.length - 1].end ? segs[segs.length - 1] : segs[0];
+  const next = idx >= 0 && idx + 1 < segs.length ? segs[idx + 1] : null;
+
+  const lines = [
+    `This clip has an authored shot-by-shot script from frame analysis — treat it as ground truth for what the person did, is doing, and does next. The person is: ${script.task}.`,
+    `Full timeline:\n${scriptTimeline(script)}`,
+    `Right now (t=${t.toFixed(1)}s): ${current.action}. ${current.detail}`,
+  ];
+  if (current.flags?.length) {
+    lines.push(`Technique problems visible in this segment: ${current.flags.join(" ")}`);
+  }
+  lines.push(
+    next
+      ? `Next in the clip: ${next.action}.`
+      : `The clip ends here. What comes next in the build: ${script.afterClip}`,
+  );
+  return lines.join("\n");
+}
 const detectBase = process.env.DETECT_URL || "http://127.0.0.1:8790";
 let detectChild = null;
 function formatTime(seconds) {
@@ -138,6 +199,7 @@ app.post("/api/chat", async (req, res) => {
     const duration = Number(req.body?.duration);
     const wantLabels = Boolean(req.body?.wantLabels);
     const lowDetail = Boolean(req.body?.lowDetail);
+    const chatScript = videoScripts.get(String(req.body?.videoId || ""));
     const motionGuideInput =
       req.body?.motionGuide && typeof req.body.motionGuide === "object"
         ? req.body.motionGuide
@@ -253,6 +315,7 @@ app.post("/api/chat", async (req, res) => {
       "A dry quip is fine when it costs zero extra words; never pad.",
       videoTitle ? `Video title: ${videoTitle}.` : "",
       videoDescription ? `Video description: ${videoDescription}.` : "",
+      chatScript ? scriptContextAt(chatScript, currentTime) : "",
       hasFrames && Number.isFinite(currentTime)
         ? `Playback position: ${timeLabel}${Number.isFinite(duration) ? ` of ${durationLabel}` : ""}.`
         : "",
@@ -1042,6 +1105,24 @@ app.post("/api/manual", async (req, res) => {
     const videoTitle = String(req.body?.videoTitle || "").trim();
     const videoDescription = String(req.body?.videoDescription || "").trim();
     const topic = String(req.body?.topic || videoTitle || "sushi").trim();
+    const videoId = String(req.body?.videoId || "").trim();
+
+    // Authored script wins over web search: the steps are what the person in
+    // THIS clip actually did, sourced from the original footage.
+    const script = videoScripts.get(videoId);
+    if (script?.steps?.length) {
+      return res.json({
+        manual: {
+          title: script.title,
+          topic: script.task || topic,
+          source: script.source,
+          steps: script.steps,
+        },
+        cached: true,
+        authored: true,
+      });
+    }
+
     const cacheKey = topic.toLowerCase().replace(/\s+/g, " ");
 
     if (manualCache.has(cacheKey)) {
@@ -1577,6 +1658,9 @@ app.post("/api/ghost", async (req, res) => {
     const frame = String(req.body?.frame || "");
     const videoTitle = String(req.body?.videoTitle || "").trim();
     const stepText = String(req.body?.stepText || "").trim();
+    const currentTime = Number(req.body?.currentTime);
+    const wantNext = Boolean(req.body?.wantNext);
+    const ghostScript = videoScripts.get(String(req.body?.videoId || ""));
 
     if (!question) {
       return res.status(400).json({ error: "question is required" });
@@ -1585,7 +1669,22 @@ app.post("/api/ghost", async (req, res) => {
       return res.status(400).json({ error: "a frame image is required" });
     }
 
-    const key = `${question}::${stepText}`.toLowerCase().replace(/\s+/g, " ");
+    // "Animate what's next" resolves against the authored script timeline: the
+    // demo shows the segment after the playhead (or the post-clip action).
+    let nextAction = "";
+    if (wantNext && ghostScript) {
+      const t = Number.isFinite(currentTime) ? currentTime : 0;
+      const segs = ghostScript.segments;
+      const idx = segs.findIndex((s) => t >= s.start && t < s.end);
+      const next = idx >= 0 && idx + 1 < segs.length ? segs[idx + 1] : null;
+      nextAction = next
+        ? `${next.action}. ${next.detail}`
+        : ghostScript.afterClip || "";
+    }
+
+    const key = `${question}::${stepText}::${nextAction}`
+      .toLowerCase()
+      .replace(/\s+/g, " ");
     if (ghostInflight.has(key)) {
       return res.json(await ghostInflight.get(key));
     }
@@ -1605,21 +1704,25 @@ app.post("/api/ghost", async (req, res) => {
       "caption is under 12 words and describes the motion, not the object.",
       videoTitle ? `Video: ${videoTitle}.` : "",
       stepText ? `The user is on this step: "${stepText}".` : "",
+      nextAction
+        ? `The user asked what to do NEXT. The build's authored script says the next action is: "${nextAction}" Plan the motion for THAT action, using the object in the frame that performs or receives it. The caption should describe that next move.`
+        : "",
     ]
       .filter(Boolean)
       .join(" ");
 
     const job = (async () => {
       const startedAt = Date.now();
-      const response = await fetch("https://api.x.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+      // Unbounded reasoning made this take 30-80s ("working out the motion"
+      // hung on screen); one box + one primitive doesn't need deliberation.
+      // reasoning_effort low plus the same low/high-detail hedge as
+      // /api/labels (upstream latency is a per-request lottery) keeps the
+      // overlay in the ~2-6s band.
+      const makeBody = (detail) =>
+        JSON.stringify({
           model: "grok-4.5",
           temperature: 0.2,
+          reasoning_effort: "low",
           messages: [
             { role: "system", content: system },
             {
@@ -1629,19 +1732,39 @@ app.post("/api/ghost", async (req, res) => {
                   type: "text",
                   text: `Viewer question: ${question}\nReturn the JSON for the attached frame.`,
                 },
-                // Latency here is reasoning-bound, not image-token-bound, so
-                // high detail buys box precision at no measurable cost.
-                { type: "image_url", image_url: { url: frame, detail: "high" } },
+                { type: "image_url", image_url: { url: frame, detail } },
               ],
             },
           ],
-        }),
-      });
+        });
 
-      const data = await response.json();
-      if (!response.ok) {
-        console.error("Ghost error:", data);
-        throw new Error(data?.error?.message || "Ghost planning failed");
+      const controllers = [new AbortController(), new AbortController()];
+      const bodies = [makeBody("low"), makeBody("high")];
+      const attempt = (i) =>
+        fetch("https://api.x.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: bodies[i],
+          signal: controllers[i].signal,
+        }).then(async (response) => {
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data?.error?.message || "Ghost planning failed");
+          }
+          return data;
+        });
+
+      let data;
+      try {
+        data = await Promise.any(controllers.map((_, i) => attempt(i)));
+      } catch (err) {
+        console.error("Ghost error:", err.errors?.[0] || err);
+        throw err.errors?.[0] || err;
+      } finally {
+        for (const c of controllers) c.abort();
       }
 
       const raw = data?.choices?.[0]?.message?.content?.trim() || "";

@@ -13,6 +13,7 @@ let wantsHighlight;
 let findCatalogChoreography;
 let catalogMotionCues;
 let resolveInstructionRoute;
+let stepIndexAtTime;
 
 before(async () => {
   vite = await createServer({
@@ -31,6 +32,7 @@ before(async () => {
   ({ resolveInstructionRoute } = await vite.ssrLoadModule(
     "/src/lib/instructionRouting.ts",
   ));
+  ({ stepIndexAtTime } = await vite.ssrLoadModule("/src/lib/manual.ts"));
   ({
     findCatalogChoreography,
     CATALOG_MOTION_CUES: catalogMotionCues,
@@ -245,6 +247,72 @@ test("general procedures and existing manual controls stay manual", () => {
   });
   assert.equal(next?.kind, "manual");
   assert.equal(next?.action.type, "next_step");
+});
+
+test("playhead sync: 'switch to my current step' snaps a timestamped manual", () => {
+  for (const primary of [
+    "Switch to my current step",
+    "Jump to the current step",
+    "Sync the steps",
+    "Which step am I on?",
+  ]) {
+    const route = resolveInstructionRoute({
+      primary,
+      alternatives: [],
+      manualOpen: true,
+      videoId: "pov-pc-build-fail",
+      currentTime: 9,
+    });
+    assert.equal(route?.kind, "manual", primary);
+    assert.equal(route?.action.type, "current_step", primary);
+  }
+
+  const doc = {
+    title: "t",
+    topic: "t",
+    source: { title: "s", url: "https://x", siteName: "x" },
+    steps: [
+      { n: 1, at: 0, text: "a" },
+      { n: 2, at: 2, text: "b" },
+      { n: 3, at: 7.5, text: "c" },
+    ],
+  };
+  assert.equal(stepIndexAtTime(doc, 0), 0);
+  assert.equal(stepIndexAtTime(doc, 5), 1);
+  assert.equal(stepIndexAtTime(doc, 16), 2);
+  assert.equal(
+    stepIndexAtTime({ ...doc, steps: [{ n: 1, text: "no stamps" }] }, 5),
+    null,
+  );
+});
+
+test("'animate what to do next' routes to a next-step ghost demo", () => {
+  for (const primary of [
+    "Animate what I should do next",
+    "Show me what to do next",
+    "Demonstrate the next move",
+  ]) {
+    const route = resolveInstructionRoute({
+      primary,
+      alternatives: [],
+      manualOpen: true,
+      videoId: "pov-pc-build-fail",
+      currentTime: 9,
+    });
+    assert.equal(route?.kind, "ghost", primary);
+    assert.equal(route?.next, true, primary);
+  }
+
+  // Bare "next step" phrasing must keep paging the manual, not animate.
+  const bare = resolveInstructionRoute({
+    primary: "Show me the next step",
+    alternatives: [],
+    manualOpen: true,
+    videoId: "pov-pc-build-fail",
+    currentTime: 9,
+  });
+  assert.equal(bare?.kind, "manual");
+  assert.equal(bare?.action.type, "next_step");
 });
 
 test("toolkit questions open the tools dropdown", () => {
