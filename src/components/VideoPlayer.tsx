@@ -2439,6 +2439,25 @@ export default function VideoPlayer({ video, onBack }: Props) {
       },
     });
 
+  // Dev-only harness: drive a full voice turn from the console without the
+  // mic — window.__grokAsk("where does this connect"). Mirrors onSpeechStart's
+  // snapshot so routing sees the same onset frame/time a spoken turn would.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as unknown as Record<string, unknown>).__grokAsk = (text: string) => {
+      const el = videoRef.current;
+      if (el) {
+        speechFrameRef.current = captureFrame(el, { maxW: 768, quality: 0.62 });
+        speechTimeRef.current = el.currentTime || 0;
+        speechContextFramesRef.current = [];
+      }
+      void handleQuestion(String(text));
+    };
+    return () => {
+      delete (window as unknown as Record<string, unknown>).__grokAsk;
+    };
+  }, [handleQuestion]);
+
   // Watchdog: a capture that never produces words (stray mic tap, noise)
   // must not leave the video frozen. Reset the turn and resume.
   useEffect(() => {
