@@ -70,8 +70,11 @@ test("small drift eases toward the correction instead of snapping", () => {
   assert.ok(boxIou(current, corrected) >= 0.5);
   const out = reconcileBox(current, corrected);
   assert.equal(out.mode, "blend");
-  // Moved toward the correction but nowhere near all the way.
-  assert.ok(out.box.x > current.x && out.box.x < corrected.x);
+  // Moved toward the correction, but less than halfway — this is the gentle
+  // band, and the bound is what separates it from the harder pull below.
+  const halfway = (current.x + corrected.x) / 2;
+  assert.ok(out.box.x > current.x, "should move toward the correction");
+  assert.ok(out.box.x < halfway, `eased too hard: ${out.box.x} >= ${halfway}`);
 });
 
 test("a sliding box is pulled harder than a drifting one", () => {

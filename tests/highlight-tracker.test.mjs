@@ -27,21 +27,32 @@ const H = 240;
 const SIZE = 40;
 
 /**
- * Paint a textured square. Texture matters: the tracker matches by normalized
+ * Paint a patterned square. Texture matters: the tracker matches by normalized
  * cross-correlation, and a flat block has no variance to correlate against.
- * `seed` varies the pattern so two blocks are distinguishable.
+ *
+ * The two patterns are photographic negatives of each other — a bright ring
+ * around a dark core, and the reverse — so their correlation is strongly
+ * negative rather than merely different. That is what makes "did reanchor
+ * actually replace the template?" a question the tests can answer: a stale
+ * template scores below MIN_SCORE against the other pattern and finds nothing.
+ * Both are non-periodic, so a match localizes unambiguously under motion.
  */
-function paint(data, x0, y0, seed) {
+function paint(data, x0, y0, pattern) {
+  const outer = pattern === 0 ? 220 : 70;
+  const inner = pattern === 0 ? 70 : 220;
+  const lo = SIZE / 4;
+  const hi = SIZE - SIZE / 4;
   for (let y = 0; y < SIZE; y++) {
     for (let x = 0; x < SIZE; x++) {
       const px = x0 + x;
       const py = y0 + y;
       if (px < 0 || py < 0 || px >= W || py >= H) continue;
       const o = (py * W + px) * 4;
-      const v = 90 + ((x * 7 + y * 13 + seed * 29) % 8) * 18;
+      const core = x >= lo && x < hi && y >= lo && y < hi;
+      const v = core ? inner : outer;
       data[o] = v;
       data[o + 1] = v;
-      data[o + 2] = Math.min(255, v + seed * 40);
+      data[o + 2] = v;
       data[o + 3] = 255;
     }
   }
@@ -57,7 +68,7 @@ function frame(blocks = []) {
     data[o + 2] = 48;
     data[o + 3] = 255;
   }
-  for (const b of blocks) paint(data, b.x, b.y, b.seed ?? 0);
+  for (const b of blocks) paint(data, b.x, b.y, b.pattern ?? 0);
   return { data };
 }
 
@@ -130,8 +141,8 @@ test("reanchor moves the box and re-templates onto the new object", () => {
   // Two distinct blocks; the tracker starts locked on the left one.
   const both = (leftX, rightX) =>
     frame([
-      { x: leftX, y: 100, seed: 0 },
-      { x: rightX, y: 160, seed: 5 },
+      { x: leftX, y: 100, pattern: 0 },
+      { x: rightX, y: 160, pattern: 1 },
     ]);
 
   const tracker = createHighlightTracker(
