@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import Dashboard from "./components/Dashboard";
+import Landing from "./components/Landing";
 import VideoPlayer from "./components/VideoPlayer";
 import { navigate } from "./lib/router";
 import type { VideoItem } from "./types";
@@ -56,34 +57,52 @@ export default function App() {
     };
   }, []);
 
-  return (
-    <div className="app-shell">
-      {!active && (
-        <header className="topbar">
-          <a
-            className="brand"
-            href="/"
-            onClick={(e) => {
-              e.preventDefault();
-              navigate("/");
-            }}
-          >
-            <img src="/assets/grok-logo.png" alt="GrokEye" />
-            <div className="brand-title">GrokEye</div>
-          </a>
-        </header>
-      )}
-
-      {active ? (
+  if (active) {
+    return (
+      <div className="app-shell">
         <VideoPlayer video={active} onBack={() => setActive(null)} />
-      ) : (
-        <Dashboard
-          videos={[LIVE_CAMERA, FLIP_COACH, ...videos]}
-          loading={loading}
-          error={error}
-          onSelect={setActive}
-        />
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="lp">
+      <header className="lp-nav">
+        <a
+          className="brand"
+          href="/"
+          onClick={(e) => {
+            e.preventDefault();
+            navigate("/");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        >
+          <img src="/assets/grok-logo.png" alt="GrokEye" />
+          <div className="brand-title">GrokEye</div>
+        </a>
+        <a
+          className="lp-btn lp-btn-primary lp-btn-nav"
+          href="#library"
+          onClick={(e) => {
+            e.preventDefault();
+            document.getElementById("library")?.scrollIntoView({ behavior: "smooth" });
+          }}
+        >
+          Try GrokEye
+        </a>
+      </header>
+
+      <main className="lp-main">
+        <Landing />
+        <section className="lp-library" id="library">
+          <Dashboard
+            videos={[LIVE_CAMERA, FLIP_COACH, ...videos]}
+            loading={loading}
+            error={error}
+            onSelect={setActive}
+          />
+        </section>
+      </main>
     </div>
   );
 }

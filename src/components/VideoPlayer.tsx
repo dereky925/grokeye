@@ -2732,24 +2732,6 @@ export default function VideoPlayer({ video, onBack }: Props) {
             <span className="video-scan-bar" />
           </div>
         )}
-        {usedVision && voiceBusy && (
-          <div
-            className={`frame-freeze-chip ${task ? "with-task" : ""}`}
-            aria-hidden
-          >
-            <span className="frame-freeze-dot" />
-            Grok is watching
-          </div>
-        )}
-        {watchEnabled && !live && !flipMode && phase === "idle" && (
-          <div
-            className={`frame-freeze-chip watch-idle ${task ? "with-task" : ""}`}
-            aria-hidden
-          >
-            <span className="frame-freeze-dot" />
-            {watchArmedLabel ?? "Watching"}
-          </div>
-        )}
         {task && <TaskStateChip task={task} />}
         {xQueue[0] && (
           <XPostCard

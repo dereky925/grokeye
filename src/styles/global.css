@@ -3471,6 +3471,16 @@ video {
   margin: 0 auto;
 }
 
+.lp-library {
+  border-top: 1px solid var(--border);
+  padding-bottom: 3rem;
+}
+
+.lp-library-page {
+  width: 100%;
+  padding: 2rem 0 0;
+}
+
 /* ---------- hero ---------- */
 
 .lp-hero {
@@ -3478,8 +3488,7 @@ video {
   grid-template-columns: 1.02fr 0.98fr;
   gap: 3.5rem;
   align-items: center;
-  padding: 4.5rem 0 4rem;
-  min-height: calc(88vh - 70px);
+  padding: 3.25rem 0 2.75rem;
 }
 
 .lp-kicker {
