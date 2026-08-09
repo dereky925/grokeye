@@ -2148,6 +2148,7 @@ app.post("/api/step-review", async (req, res) => {
         verdict: "not_visible",
         summary: "The review frames did not capture the step.",
         issues: [],
+        description: "The review frames did not capture the step cleanly.",
         spoken: "I couldn't get a clean look at that step — try again in a moment.",
         step: { n: step.n, start: step.start, end: step.end, text: step.text },
         degraded: `only ${distinct} distinct frames`,
@@ -2179,6 +2180,7 @@ app.post("/api/step-review", async (req, res) => {
         verdict: "correct | minor_issues | incorrect | not_visible",
         issues: [{ what: "a discrepancy your own `seen` entries support", fix: "the corrective cue" }],
         description: "3 to 5 short sentences for an on-screen panel: what you saw, whether it met the requirement, and the fix if not",
+        spoken: "1-2 short sentences to say aloud: lead with the verdict, then the one concrete fix if any",
       }),
       "FILL IN `seen` FIRST, one entry per frame, before deciding anything. Every later field must be supported by those entries — never assert a state no entry records.",
       "Keep each `seen` entry under 12 words and `description` under 60 words. Terse output keeps the reply fast.",
@@ -2189,6 +2191,7 @@ app.post("/api/step-review", async (req, res) => {
       "An action done in the WRONG ORDER is 'incorrect' even though it was performed. If the requirement says something must happen first and you did not see it, that is the fault and the fix.",
       "Known technique concerns are hypotheses only — include one ONLY if your own `seen` entries support it.",
       "`description` is plain prose shown on screen: no markdown, no bullets, no frame numbers. Lead with the verdict.",
+      "`spoken` goes straight to text-to-speech: plain prose only, under 40 words, no markdown or formatting characters. Confident and calm. Do not mention frames, panels, or the review UI.",
       `Overall task: ${script.task}.`,
       script.setting ? `Scene: ${script.setting}` : "",
       Array.isArray(script.procedure) && script.procedure.length
@@ -2251,10 +2254,22 @@ app.post("/api/step-review", async (req, res) => {
         .filter((i) => i.what)
         .slice(0, 4),
       description: String(parsed?.description || "").trim().slice(0, 600),
+      spoken: "",
       step: { n: step.n, start: step.start, end: step.end, text: step.text },
     };
     if (out.verdict === "correct") out.issues = [];
     if (out.verdict === "incorrect" && !out.issues.length) out.verdict = "not_visible";
+
+    const fallbackSpoken =
+      out.verdict === "correct"
+        ? "That step looked right."
+        : out.verdict === "not_visible"
+          ? "I couldn't tell from those frames."
+          : `${out.issues[0]?.fix || out.issues[0]?.what || out.summary || "Something looked off on that step."}`.trim();
+    out.spoken =
+      stripSpokenMarkdown(String(parsed?.spoken || "")).slice(0, 280) ||
+      stripSpokenMarkdown(fallbackSpoken).slice(0, 280);
+
     console.log(
       `[step-review] ${videoId} step ${step.n} (${step.start}-${step.end}s) -> ${out.verdict} in ${Math.round(performance.now() - t0)}ms`,
     );

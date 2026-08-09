@@ -17,10 +17,8 @@ const VERDICT_LABEL: Record<string, string> = {
 /**
  * Verdict panel for "how did I do on that step?".
  *
- * Sits under the steps overlay on the left and carries the answer visually —
- * the frames it judged plus a short written verdict. Nothing is spoken and
- * nothing goes in the voice bubble: the strip is the evidence, and a reviewer
- * wants to look at it rather than listen to it.
+ * Opens in the bottom-right (draggable) with the judged frames + written
+ * verdict. A shorter spoken line plays via TTS in parallel (see VideoPlayer).
  */
 export default function StepReviewPanel({
   state,

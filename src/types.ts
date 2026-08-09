@@ -242,8 +242,10 @@ export type StepReview = {
   summary: string;
   expected: string;
   issues: Array<{ what: string; fix: string }>;
-  /** 3-5 sentences for the on-screen panel. Never spoken. */
+  /** 3-5 sentences for the on-screen panel. */
   description: string;
+  /** 1-2 sentences for TTS — shorter than `description`. */
+  spoken: string;
   step: { n: number; start: number; end: number; text: string };
 };
 

@@ -13,6 +13,8 @@ Where a script exists:
 - **`/api/step-review`** ("how did I do on that step?") samples equispaced
   frames across the current step's time range and judges them against this
   script — the segment's `flags` list the known technique mistakes to check.
+  The response includes a short `spoken` line for TTS plus a longer on-screen
+  `description`.
 - The per-video sections below are sent to the model as scenario context.
 
 ## `pov-pc-build-fail` — First PC Build (novice), 0:00–0:17
