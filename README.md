@@ -1,6 +1,39 @@
-# Grokathon 2026
+# GrokEye
 
-Local Grok-themed video player with a “Hey Grok” voice overlay (Carina).
+**Grok-Augmented Reality** for physical work — hands-free coaching that sees through the camera, answers out loud, and points at exactly where things go.
+
+Built for [Grokathon 2026](https://x.ai).
+
+## Demo
+
+Watch the walkthrough: **[GrokEye on YouTube](https://www.youtube.com/watch?v=lC4oP8kb9KE)**
+
+| Espresso portafilter coaching | IKEA assembly guide |
+| --- | --- |
+| ![GrokEye coaching an espresso portafilter prep](docs/coffee.png) | ![GrokEye overlaying an IKEA assembly manual](docs/IKEA.png) |
+
+## What it does
+
+GrokEye looks through the worker’s eyes, speaks the fix, and highlights the exact spot — voice-controlled, hands-free. Ask how-tos and it pulls real web instructions; ask “check my work” and it verifies what you did against a saved connection task or recent frames.
+
+- **Live AR guidance** — boxes, connection arrows, and spoken cues over catalog clips or a webcam
+- **Web how-to manuals** — say “show me how to make sushi” / open the coffee or IKEA guide
+- **Step correctness review** — “how did I do on that step?” with frame strips + spoken verdict
+- **Work verify** — connection answers can seal as tasks; “check my work” compares before vs after
+- **Extras** — Spotify / YouTube by voice, live camera mode, organization intelligence page
+
+## Tech stack
+
+| Layer | What we use |
+| --- | --- |
+| **Speech in** | Chrome / Chromium **Web Speech API** (STT) — no speech API key in this app |
+| **Speech out** | **xAI TTS** — voice `carina` via `/api/tts` |
+| **Brain** | **Grok** (`grok-4.5`) for Q&A, vision boxes, manuals, verify, step review |
+| **Web instructions** | Phrase-match → `/api/manual` → Grok + **web_search** → step JSON |
+| **Highlights** | On-device color (e.g. salmon) → optional local YOLO pack → **Grok multimodal boxes** (hedged multi-draw); custom **JS tracker** (no OpenCV) keeps boxes glued while video plays |
+| **App** | React + Vite client, Express API, optional Python detector |
+
+**Voice path in one line:** mic → Chrome Web Speech (text) → GrokEye intent routing → Grok / tools → Carina speaks the reply.
 
 ## Setup
 
@@ -9,47 +42,18 @@ cp .env.example .env
 # put your XAI_API_KEY in .env
 
 npm install
-npm run detect:setup   # once — creates the Python venv
-npm run dev            # API auto-starts the detector if needed
+npm run detect:setup   # once — optional local detector venv
+npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173).
+Open [http://localhost:5173](http://localhost:5173). Use **Chrome** for voice.
 
 ## Usage
 
-1. Pick a video from the dashboard, or **Live Camera** for the webcam feed.
-2. **Space** toggles play/pause.
-3. Just talk (Chrome/Edge) or tap the mic chip.
-4. Ask about what’s on screen, open the sushi manual, or say **“highlight the knife”** / **“highlight the person”**.
-5. Highlights: client **color blob** for salmon (instant), else **YOLOv8n** (COCO), else **yolov8n-worldv2** fallback. Your existing tracker keeps the box glued after that.
-6. Say **“play Bowie”** / **“play Spotify”** for hands-free music (Spotify Premium + one-time Connect/Enable). **“stop music”** pauses.
-
-## Live camera
-
-Pick **Live Camera** (first card on the dashboard) to run everything against an
-attached webcam instead of a file. Chrome asks for camera permission on first
-open; grant it and the feed starts.
-
-- The USB webcam is auto-selected over the built-in FaceTime camera. If more
-  than one camera is attached, a picker appears in the player bar.
-- The webcam mic is never opened — voice stays on the Web Speech recognizer.
-- **Space** (or click) freezes the frame, which is handy before asking for a
-  highlight or a demo. Arrow-key scrubbing is off — there is nothing to seek.
-- Everything else works the same: highlights, manual, tools, ghost demos.
-
-## Spotify (optional)
-
-1. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard).
-2. Add redirect URI: `http://127.0.0.1:5173/api/spotify/callback`
-3. Put `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in `.env` (see `.env.example`).
-4. Restart `npm run dev`, say “play Bowie”, Connect + Enable once — then voice is hands-free.
-   Browsers still require that single Enable tap to unlock audio (not a Spotify limitation we can remove).
-
-## Detector packs
-
-Weights download under Ultralytics cache / cwd (`*.pt` gitignored).
-Packs are JSON in `detector/packs/` (`kind`: `"yolo"` or `"world"`). Manifest videos can set `"detectorPack": "sushi"`.
-Set `AUTO_DETECT=0` to disable auto-spawn (if you manage the detector yourself).
+1. Pick a video from the home library, or **Live Camera**.
+2. Talk freely (or tap the mic). Examples: “where does this connect?”, “open the coffee manual”, “check my work”, “how did I do?”
+3. **Space** play/pause · arrow keys scrub catalog clips.
+4. Optional Spotify: see `.env.example` and [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) (`http://127.0.0.1:5173/api/spotify/callback`).
 
 ## Add videos
 

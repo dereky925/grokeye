@@ -1634,10 +1634,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
         // Step correctness — "how did I do on that step?" Judges ONE step:
         // asking in the first half of a step means the step that just
-        // finished, second half means the current one. The answer is visual,
-        // not spoken: the panel shows the frames it judged plus a written
-        // verdict, so nothing goes to TTS or the voice bubble. Flip mode owns
-        // its own "how did I do" above.
+        // finished, second half means the current one. The panel shows the
+        // judged frames + written verdict; a short spoken line also goes to
+        // TTS (same pattern as bottle-flip review). Flip mode owns its own
+        // "how did I do" above.
         if (!flipMode && !live && wantsStepReview(heard)) {
           const script = await fetchVideoScript(video.id);
           if (sessionId !== sessionRef.current) return;
@@ -1650,8 +1650,10 @@ export default function VideoPlayer({ video, onBack }: Props) {
               loading: true,
               stepNumber: step.n,
               stepText: step.text,
-              x: stepReviewRef.current?.x ?? 24,
-              y: stepReviewRef.current?.y ?? 360,
+              x: stepReviewRef.current?.x ?? Math.max(8, window.innerWidth - 320 - 24),
+              y:
+                stepReviewRef.current?.y ??
+                Math.max(8, window.innerHeight - 280 - 100),
             };
             setStepReview(opening);
             stepReviewRef.current = opening;
@@ -1681,6 +1683,19 @@ export default function VideoPlayer({ video, onBack }: Props) {
               };
               setStepReview(done);
               stepReviewRef.current = done;
+
+              if (review.spoken) {
+                setReply(review.spoken);
+                lastSpokenRef.current = review.spoken;
+                setMicArmed(false);
+                setPhase("speaking");
+                try {
+                  const url = await speakText(review.spoken);
+                  await playAudioUrl(url, sessionId);
+                } catch {
+                  /* panel already has the verdict */
+                }
+              }
             } catch (err) {
               if (sessionId !== sessionRef.current) return;
               setStepReview(null);

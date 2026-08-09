@@ -5374,7 +5374,7 @@ video {
     animation: none;
   }
 }
-/* ---- Step review panel (sits under the steps overlay, left side) ---- */
+/* ---- Step review panel (defaults to bottom-right; still draggable) ---- */
 
 .step-review {
   position: absolute;
