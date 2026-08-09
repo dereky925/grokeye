@@ -17,6 +17,8 @@ export type CatalogMotionCue = {
   /** Representative frame used by the visual regression preview. */
   previewAt: number;
   scene: string;
+  /** Canonical grounded referent retained briefly for follow-up pronouns. */
+  subject: string;
   note: string;
   label: string;
   mode: CatalogMotionMode;
@@ -45,6 +47,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 20,
     previewAt: 12,
     scene: "Rice is being spread across the nori on a bamboo rolling mat.",
+    subject: "rice",
     note: "Trace → spread to the edges",
     label: "Spread edge-to-edge",
     mode: "morph",
@@ -65,6 +68,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 19,
     previewAt: 2,
     scene: "A straight copper tube is seated in a lever pipe bender and bent around its former.",
+    subject: "copper pipe",
     note: "Trace → bend around the former",
     label: "Bend to the angle mark",
     mode: "morph",
@@ -85,6 +89,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 150,
     previewAt: 135,
     scene: "Cut copper lengths and elbow fittings are being routed through the open floor/ceiling run.",
+    subject: "copper pipe",
     note: "Trace → feed into the run",
     label: "Feed square into fitting",
     mode: "translate",
@@ -102,6 +107,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 11.5,
     previewAt: 8,
     scene: "The novice builder is matching the AIO/fan lead connectors above the radiator.",
+    subject: "fan connector",
     note: "Trace → match the keyed plug",
     label: "Align the keyed edges",
     mode: "translate",
@@ -113,12 +119,102 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     keywords: ["plug", "connector", "fan", "cable", "aio", "connect"],
   },
   {
+    id: "cpu-unbox-before-placement",
+    videoId: "pov-pc-build-cpu-ram",
+    start: 0,
+    end: 6.4,
+    previewAt: 4,
+    scene: "The Intel CPU is still in its retail carton, which covers the motherboard socket.",
+    subject: "CPU",
+    note: "Trace → move the package aside first",
+    label: "Unbox first—socket is hidden",
+    mode: "translate",
+    outline:
+      "M 621 269 L 783 294 Q 826 300 845 309 L 845 325 L 806 489 L 801 490 L 598 477 Q 583 470 583 448 L 601 319 Q 608 276 621 269 Z",
+    delta: [225, -8],
+    motionPath: "M 710 382 C 774 370 843 372 935 382",
+    detailPaths: ["M 642 294 L 810 320 L 779 466 L 611 448 Z"],
+    labelAt: [858, 510],
+    keywords: [
+      "cpu",
+      "processor",
+      "chip",
+      "box",
+      "socket",
+      "unbox",
+      "put",
+      "place",
+      "install",
+    ],
+  },
+  {
+    id: "cpu-align-to-open-socket",
+    videoId: "pov-pc-build-cpu-ram",
+    start: 54.4,
+    end: 55.45,
+    previewAt: 55,
+    scene: "The bare Intel CPU is held beside the exposed LGA1700 contact bed.",
+    subject: "CPU",
+    note: "Trace → align over the open socket",
+    label: "CPU goes here—lower flat",
+    mode: "morph",
+    outline:
+      "M 921 474 L 1059 513 Q 1075 518 1073 536 L 1034 673 Q 1031 684 1017 681 L 891 637 Q 876 631 881 612 L 912 493 Q 916 480 921 474 Z",
+    destination:
+      "M 648 338 L 769 340 Q 778 341 778 352 L 775 473 Q 774 483 764 484 L 648 479 Q 639 478 639 467 L 641 349 Q 641 341 648 338 Z",
+    motionPath: "M 972 574 C 904 550 817 496 709 411",
+    labelAt: [800, 316],
+    keywords: [
+      "cpu",
+      "processor",
+      "chip",
+      "socket",
+      "place",
+      "put",
+      "align",
+      "lower",
+      "seat",
+      "install",
+    ],
+  },
+  {
+    id: "cpu-lower-over-socket",
+    videoId: "pov-pc-build-cpu-ram",
+    start: 55.45,
+    end: 57.8,
+    previewAt: 55.6,
+    scene: "The bare Intel CPU is held beside the open LGA1700 socket.",
+    subject: "CPU",
+    note: "Trace → seat the CPU in the open socket",
+    label: "Seat it in this socket",
+    mode: "morph",
+    outline:
+      "M 770 341 L 876 328 Q 884 327 885 336 L 898 516 Q 899 526 889 527 L 772 522 Q 763 522 763 512 L 762 350 Q 762 342 770 341 Z",
+    destination:
+      "M 672 378 L 786 365 Q 794 364 795 373 L 807 491 Q 808 501 798 502 L 689 525 Q 680 526 679 516 L 664 388 Q 663 379 672 378 Z",
+    motionPath: "M 838 420 C 810 398 780 402 752 434",
+    labelAt: [590, 285],
+    keywords: [
+      "cpu",
+      "processor",
+      "chip",
+      "socket",
+      "place",
+      "put",
+      "align",
+      "lower",
+      "seat",
+      "install",
+    ],
+  },
+  {
     id: "cpu-lower-into-socket",
     videoId: "pov-pc-build-cpu-ram",
     start: 72,
-    end: 101,
+    end: 84,
     previewAt: 82,
     scene: "The Intel CPU is aligned over the open LGA1700 socket, lowered flat, then retained.",
+    subject: "CPU",
     note: "Trace → lower straight down",
     label: "Lower flat—do not slide",
     mode: "translate",
@@ -137,6 +233,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 155,
     previewAt: 140,
     scene: "DDR4 DIMMs are aligned with the keyed slots and pressed evenly until the latches click.",
+    subject: "RAM stick",
     note: "Trace → press both ends evenly",
     label: "Press until both latches click",
     mode: "translate",
@@ -155,6 +252,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 64,
     previewAt: 48,
     scene: "The rear PCIe slot covers are loosened and removed before the graphics card is installed.",
+    subject: "PCIe slot cover",
     note: "Trace → lift the slot cover out",
     label: "Remove matching slot covers",
     mode: "translate",
@@ -172,6 +270,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 114,
     previewAt: 100,
     scene: "The XFX graphics card is aligned with the PCIe x16 slot and rear bracket, then seated evenly.",
+    subject: "graphics card",
     note: "Trace → seat into the PCIe slot",
     label: "Press level into the slot",
     mode: "translate",
@@ -194,6 +293,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 43,
     previewAt: 24,
     scene: "Celery is being cut into small pieces on the wooden board for the tuna mixture.",
+    subject: "celery",
     note: "Trace → slice with a short rock",
     label: "Rock the blade—fingers back",
     mode: "slice",
@@ -212,6 +312,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 99,
     previewAt: 88,
     scene: "The assembled tuna sandwich is lowered into the skillet and positioned flat for frying.",
+    subject: "sandwich",
     note: "Trace → lower flat into the pan",
     label: "Set it flat in the skillet",
     mode: "translate",
@@ -230,6 +331,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     end: 240,
     previewAt: 225,
     scene: "A locked electrical connector is exposed beside the rear hub/suspension assembly.",
+    subject: "electrical connector",
     note: "Trace → release lock, pull straight",
     label: "Release the red lock first",
     mode: "translate",
@@ -244,43 +346,41 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
   {
     id: "ikea-place-leg-frame",
     videoId: "ikea",
-    start: 4,
-    end: 15,
+    start: 4.8,
+    end: 8.15,
     previewAt: 6,
-    scene: "A white MICKE leg/end frame is held beside the open short end of the upside-down desktop panel.",
-    note: "Trace → place on the open end",
-    label: "Place the leg frame on this end",
+    scene: "The second white rectangular desk end/leg frame is held beside the free short end of the upside-down desktop; the matching end frame is already installed at the far end.",
+    subject: "leg frame",
+    note: "Trace → pivot the holed rail onto the free end",
+    label: "Match this rail to the free end",
     mode: "morph",
     outline:
-      "M 274 157 L 301 157 L 702 665 Q 710 678 697 691 L 677 687 L 276 181 Q 267 169 274 157 Z",
+      "M 277 155 L 315 152 L 448 314 L 566 458 L 681 598 Q 693 611 693 630 L 694 668 Q 694 683 681 689 Q 665 689 657 676 L 655 638 L 572 595 L 462 462 L 370 330 L 296 215 Z M 461 356 L 480 350 L 681 581 L 670 600 Z",
     destination:
-      "M 516 352 L 536 346 L 760 648 Q 768 660 756 671 L 740 670 L 511 374 Q 503 361 516 352 Z",
-    motionPath: "M 486 414 C 536 430 581 465 632 515",
-    labelAt: [776, 526],
+      "M 526 360 L 548 341 L 615 420 L 657 470 L 718 545 Q 725 552 725 559 L 723 569 Q 720 577 710 578 Q 700 579 695 571 L 692 563 L 643 508 L 582 434 L 552 397 L 533 372 Z M 566 386 L 580 374 L 698 516 L 686 530 Z",
+    motionPath: "M 455 370 C 535 372 585 408 622 448",
+    labelAt: [770, 470],
     keywords: [
       "leg",
+      "legs",
+      "end frame",
+      "side frame",
       "frame",
-      "side",
       "upright",
-      "end",
-      "put",
-      "place",
-      "position",
-      "attach",
-      "build",
-      "assemble",
-      "install",
+      "desk",
+      "table",
     ],
   },
   {
-    id: "ikea-seat-side-rail",
+    id: "ikea-seat-leg-frame",
     videoId: "ikea",
     start: 15,
     end: 29,
     previewAt: 20,
-    scene: "A white MICKE desk side rail is aligned with the upright frame beside the desktop panel.",
-    note: "Trace → seat the rail square",
-    label: "Seat the rail flush",
+    scene: "The second white MICKE end/leg frame is aligned and seated on the free short end of the upside-down desktop.",
+    subject: "leg frame",
+    note: "Trace → seat the mounting rail square",
+    label: "Seat the end frame flush",
     mode: "translate",
     outline:
       "M 86 344 L 641 218 Q 660 215 679 232 L 667 260 L 112 379 Q 92 374 79 361 Z",
@@ -291,25 +391,82 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     keywords: [
       "rail",
       "leg",
-      "side",
+      "legs",
+      "end frame",
+      "side frame",
       "frame",
       "desk",
       "ikea",
-      "align",
-      "attach",
-      "insert",
-      "put",
-      "place",
-      "position",
-      "build",
+    ],
+  },
+  {
+    id: "espresso-tamp-press",
+    videoId: "pov-espresso-tamp",
+    start: 28,
+    end: 33,
+    previewAt: 30,
+    scene:
+      "The barista presses the tamper into the grounds-filled portafilter held against the counter edge.",
+    subject: "tamper",
+    note: "Trace → press straight down, level",
+    label: "Tamp flat—firm, level press",
+    mode: "translate",
+    outline:
+      "M 574 512 Q 576 480 608 476 Q 641 480 644 512 L 646 542 Q 640 556 609 558 Q 580 556 573 542 Z",
+    delta: [0, 30],
+    motionPath: "M 604 432 C 606 468 609 504 613 542",
+    detailPaths: ["M 590 566 Q 622 578 662 568"],
+    labelAt: [742, 500],
+    keywords: [
+      "tamp",
+      "tamper",
+      "stamp",
+      "pack",
+      "puck",
+      "portafilter",
+      "grounds",
+      "coffee",
     ],
   },
 ];
 
+const ACTION_ONLY_KEYWORDS = new Set([
+  "align",
+  "assemble",
+  "attach",
+  "bend",
+  "build",
+  "chop",
+  "connect",
+  "cut",
+  "disconnect",
+  "feed",
+  "fit",
+  "fry",
+  "insert",
+  "install",
+  "lower",
+  "place",
+  "position",
+  "press",
+  "pull",
+  "put",
+  "remove",
+  "roll",
+  "route",
+  "seat",
+  "slice",
+  "spread",
+  "unbox",
+  "unplug",
+]);
+
 function keywordScore(cue: CatalogMotionCue, message: string): number {
   const text = message.toLowerCase();
   return cue.keywords.reduce(
-    (score, keyword) => score + (text.includes(keyword) ? 1 : 0),
+    (score, keyword) =>
+      score +
+      (!ACTION_ONLY_KEYWORDS.has(keyword) && text.includes(keyword) ? 1 : 0),
     0,
   );
 }
@@ -319,6 +476,7 @@ export function findCatalogChoreography(
   videoId: string,
   currentTime: number,
   message: string,
+  subjectHint?: string | null,
 ): CatalogMotionCue | null {
   const matches = CATALOG_MOTION_CUES.filter(
     (cue) =>
@@ -327,11 +485,18 @@ export function findCatalogChoreography(
       currentTime < cue.end,
   );
   if (!matches.length) return null;
-  const best = matches
-    .map((cue) => ({ cue, score: keywordScore(cue, message) }))
-    .sort((a, b) => b.score - a.score)[0];
   // Named-object placement must agree with the authored subject. Purely
   // deictic asks ("move this") may still use the only grounded scene cue.
-  const deictic = /\b(this|that|it|these|those|here)\b/i.test(message);
+  const namedReferent =
+    /\b(?:this|that|these|those|the|my|our)\s+(?!(?:one|thing|object|part|piece|stuff|way|around|over|under|up|down|left|right|in|out|into|onto|away|here|there|clockwise|counterclockwise)\b)[a-z][\w-]*/i.test(
+      message,
+    );
+  const deictic =
+    /\b(this|that|it|these|those|here)\b/i.test(message) && !namedReferent;
+  const scoringText =
+    deictic && subjectHint ? `${message} ${subjectHint}` : message;
+  const best = matches
+    .map((cue) => ({ cue, score: keywordScore(cue, scoringText) }))
+    .sort((a, b) => b.score - a.score)[0];
   return best.score > 0 || deictic ? best.cue : null;
 }

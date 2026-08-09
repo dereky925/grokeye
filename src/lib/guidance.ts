@@ -28,7 +28,7 @@ const DIRECTIONS = new Set<GuidanceDirection>([
 export function wantsMotionGuidance(message: string): boolean {
   const text = message.toLowerCase().replace(/[’]/g, "'").trim();
   const placementQuestion =
-    /\bwhere\s+(?:(?:(?:do|should|can|would)\s+(?:i|we))|to)\s+(?:put|place|position|attach|fit|install|mount|build|assemble|connect|seat)\s+(?:this|that|the|these|those|my|our)\b/.test(
+    /\bwhere\s+(?:(?:(?:do|should|can|would)\s+(?:i|we))|to)\s+(?:put|place|position|attach|fit|install|mount|build|assemble|connect|seat)\s+(?:this|that|it|the|these|those|my|our)\b/.test(
       text,
     ) ||
     /\bwhere\s+(?:does|do|should)\s+(?:this|that|the|it|these|those|my|our)\b(?:\s+\w+){0,3}\s+(?:go|fit|attach|connect|mount|sit)\b/.test(
@@ -59,6 +59,8 @@ export async function fetchGuidance(input: {
   message: string;
   frame: string;
   videoTitle?: string;
+  /** Recent grounded subject for resolving a pronoun; current frame still wins. */
+  subjectHint?: string | null;
 }): Promise<GuidanceResponse> {
   const response = await fetch("/api/guide", {
     method: "POST",
