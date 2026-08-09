@@ -179,7 +179,15 @@ export function extractTopic(message: string): string | undefined {
           /^(?:open|show|pull\s+up|start|bring\s+up|get|give\s+me|read)\s+(?:me\s+)?/,
           "",
         )
-        .replace(/\s*\b(?:manual|guide|instructions?|recipe|steps?)\b\s*$/, "");
+        // Trailing forgetfulness: "...manual i forgot the next step"
+        .replace(
+          /\s*\b(?:manual|guide|instructions?|recipe|steps?)\b(?:\s*,?\s*(?:i\s+)?(?:forgot|forget|don't remember|do not remember|cant remember|can't remember).*)?$/i,
+          "",
+        )
+        .replace(
+          /\s*\b(?:i\s+)?(?:forgot|forget|don't remember|do not remember).*$/i,
+          "",
+        );
     }
   }
 
@@ -239,6 +247,12 @@ export async function identifyTopicFromFrame(
  */
 function topicFromUtterance(t: string): string | undefined {
   if (/\bsushi\b/.test(t)) return "sushi";
+  if (/\b(espresso|portafilter|barista)\b/.test(t)) {
+    return "espresso portafilter prep";
+  }
+  if (/\bcoffee\b/.test(t) && /\b(manual|guide|instructions?|prep)\b/.test(t)) {
+    return "espresso portafilter prep";
+  }
   if (/\bmicke\b/.test(t)) return "IKEA MICKE desk";
   if (/\bikea\b/.test(t) && /\bdesk\b/.test(t)) return "IKEA MICKE desk";
   if (/\bikea\b/.test(t)) return "IKEA MICKE desk";
@@ -273,21 +287,31 @@ export function parseManualAction(
     return { type: "close_manual" };
   }
 
+  // Open a how-to document. "show me the next step" must not open a new
+  // manual, but "show me the coffee manual, I forgot the next step" should.
+  const openVerb =
+    /\b(open|show|pull up|start|bring up|get|give me|read)\b/.test(t);
+  const namesDoc =
+    /\b(manual|guide|instructions?|recipe|assembly)\b/.test(t);
+  const nextPrevStepOnly =
+    /\b(next|previous|prev|continue|go on|proceed|flip)\b/.test(t) &&
+    !namesDoc;
   if (
-    /\b(open|show|pull up|start|bring up|get|give me|read)\b/.test(t) &&
-    /\b(manual|guide|instructions?|recipe|steps?|assembly)\b/.test(t) &&
-    !/\b(next|previous|prev|continue|go on|proceed|flip)\b/.test(t)
+    openVerb &&
+    (namesDoc ||
+      (/\bsteps?\b/.test(t) && !nextPrevStepOnly)) &&
+    !nextPrevStepOnly
   ) {
     return { type: "open_manual", topic: topicFromUtterance(t) };
   }
-  // Bare "sushi manual" / "ikea manual" / "desk manual"
+  // Bare "sushi manual" / "ikea manual" / "desk manual" / "coffee manual"
   if (
-    /\b(sushi|ikea|desk)\b/.test(t) &&
+    /\b(sushi|ikea|desk|coffee|espresso)\b/.test(t) &&
     /\b(manual|guide|recipe|instructions?|assembly)\b/.test(t)
   ) {
     return {
       type: "open_manual",
-      topic: topicFromUtterance(t) || "IKEA MICKE desk",
+      topic: topicFromUtterance(t) || "espresso portafilter prep",
     };
   }
   if (
@@ -350,10 +374,106 @@ export function parseManualAction(
   return null;
 }
 
+/**
+ * For espresso/coffee guides, open on the dose/grind step (portafilter on the
+ * grind machine) — never step 1 when a later dose step exists.
+ */
+export const ESPRESSO_PREP_MANUAL: ManualDoc = {
+  title: "Espresso portafilter prep",
+  topic: "espresso portafilter prep",
+  mode: "steps",
+  source: {
+    title: "How to Make Espresso",
+    url: "https://home.lamarzoccousa.com/how-to-make-espresso/",
+    siteName: "home.lamarzoccousa.com",
+  },
+  steps: [
+    {
+      n: 1,
+      text: "Warm up the espresso machine and purge the group head briefly.",
+    },
+    {
+      n: 2,
+      text: "Lock the empty portafilter onto the grind machine and dose it with fresh grounds.",
+    },
+    {
+      n: 3,
+      text: "Tamp the puck flat and level with the tamper on the counter.",
+    },
+    {
+      n: 4,
+      text: "Lock the tamped portafilter fully into the group head.",
+    },
+  ],
+};
+
+/** Open on dose-at-grinder — intentionally not step 1. */
+export const ESPRESSO_MANUAL_START_INDEX = 1;
+
+export function preferredManualStartIndex(
+  doc: ManualDoc,
+  ctx?: { videoId?: string; topic?: string },
+): number {
+  if (doc.mode === "pdf" || !doc.steps.length) return 0;
+
+  // Authored espresso checklist: always open on the dose-at-grinder step.
+  if (
+    doc.title === ESPRESSO_PREP_MANUAL.title ||
+    ctx?.videoId === "pov-espresso-tamp"
+  ) {
+    return Math.min(
+      ESPRESSO_MANUAL_START_INDEX,
+      Math.max(0, doc.steps.length - 1),
+    );
+  }
+
+  const blob = `${ctx?.videoId ?? ""} ${ctx?.topic ?? ""} ${doc.topic} ${doc.title}`;
+  const espresso =
+    ctx?.videoId === "pov-espresso-tamp" ||
+    /\b(espresso|coffee|portafilter|barista|latte)\b/i.test(blob);
+  if (!espresso) return 0;
+
+  let bestIdx = 0;
+  let bestScore = 0;
+  for (let i = 0; i < doc.steps.length; i++) {
+    const t = String(doc.steps[i]?.text || "").toLowerCase();
+    let score = 0;
+    if (/\b(grind(?:er|ing)?|dose|dosing|grounds)\b/.test(t)) score += 4;
+    if (/\bportafilter\b/.test(t)) score += 2;
+    if (
+      /\b(under|into|in|to|at|on(?:to)?)\b[\s\w]{0,24}\b(grind(?:er)?|grind machine)\b/.test(
+        t,
+      ) ||
+      /\bgrind(?:er)?\b[\s\w]{0,24}\b(portafilter|basket|dose)\b/.test(t)
+    ) {
+      score += 5;
+    }
+    if (/\b(group head|lock(?:ed|ing)? in)\b/.test(t) && !/\b(grind|dose)\b/.test(t)) {
+      score -= 3;
+    }
+    if (/\btamp/.test(t) && !/\b(grind|dose)\b/.test(t)) score -= 2;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  // Prefer not landing on step 1 if a later grind/dose step scored.
+  if (bestScore > 0 && bestIdx === 0) {
+    const later = doc.steps.findIndex(
+      (s, i) =>
+        i > 0 &&
+        /\b(grind|dose|portafilter)\b/i.test(String(s.text || "")),
+    );
+    if (later > 0) return later;
+  }
+  return bestScore > 0 ? bestIdx : 0;
+}
+
 export function applyManualAction(
   state: ManualOverlayState | null,
   action: Exclude<ManualAction, null>,
   doc?: ManualDoc,
+  opts?: { startIndex?: number },
 ): { state: ManualOverlayState | null; speak: string } {
   const pageWord = (d: ManualDoc | undefined) =>
     d?.mode === "pdf" ? "Page" : "Step";
@@ -363,20 +483,29 @@ export function applyManualAction(
       if (!doc) {
         return { state, speak: "I couldn't load a manual." };
       }
+      const last = Math.max(0, doc.steps.length - 1);
+      const stepIndex = Math.min(
+        Math.max(0, opts?.startIndex ?? 0),
+        last,
+      );
       const next: ManualOverlayState = {
         doc,
-        stepIndex: 0,
+        stepIndex,
         x: state?.x ?? 24,
         y: state?.y ?? 96,
       };
-      const step = doc.steps[0];
+      const step = doc.steps[stepIndex];
       const label = pageWord(doc);
+      const openedAt =
+        stepIndex === 0
+          ? `${label} 1 of ${doc.steps.length}`
+          : `starting at ${label.toLowerCase()} ${stepIndex + 1} of ${doc.steps.length}`;
       return {
         state: next,
         speak:
           doc.mode === "pdf"
             ? `${doc.title}. Opening the official assembly pamphlet, ${label.toLowerCase()} 1 of ${doc.steps.length}.`
-            : `${doc.title}. ${label} 1 of ${doc.steps.length}: ${step?.text ?? ""}`.trim(),
+            : `${doc.title}. ${openedAt}: ${step?.text ?? ""}`.trim(),
       };
     }
     case "close_manual":
@@ -510,6 +639,19 @@ const MICKE_PDF = {
     "https://www.ikea.com/us/en/assembly_instructions/micke-desk-black-brown__AA-476633-15-100.pdf",
 };
 
+function wantsEspressoPrepManual(
+  topic: string,
+  input: { videoId?: string },
+): boolean {
+  if (input.videoId === "pov-espresso-tamp") return true;
+  const t = topic.toLowerCase();
+  return (
+    /\b(espresso|portafilter|barista)\b/.test(t) ||
+    (/\bcoffee\b/.test(t) &&
+      /\b(manual|guide|instruction|how\s+to|prep|shot)\b/.test(t))
+  );
+}
+
 function wantsIkeaPamphlet(
   topic: string,
   input: { manualPdf?: string; videoId?: string },
@@ -577,6 +719,14 @@ export async function fetchManual(input: {
       title: MICKE_PDF.title,
       sourceUrl: MICKE_PDF.sourceUrl,
     });
+  }
+
+  // Coffee / espresso: authored checklist — dose-at-grinder is step 2.
+  if (wantsEspressoPrepManual(topic, input)) {
+    return {
+      ...ESPRESSO_PREP_MANUAL,
+      topic: topic || ESPRESSO_PREP_MANUAL.topic,
+    };
   }
 
   // v2 drops manuals cached back when every guide was padded to 6 steps.

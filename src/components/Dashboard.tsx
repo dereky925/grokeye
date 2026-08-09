@@ -14,11 +14,7 @@ export default function Dashboard({
   onSelect,
 }: Props) {
   return (
-    <div className="page">
-      <section className="hero">
-        <h1>Grok-Enhanced Reality.</h1>
-      </section>
-
+    <div className="page lp-library-page">
       {error && <div className="error-banner">{error}</div>}
 
       {(!loading || videos.some((v) => v.live)) && (

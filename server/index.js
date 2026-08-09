@@ -10,6 +10,7 @@ import { mountSpotifyRoutes, spotifyConfigured } from "./spotify.js";
 import { mountTwitterRoutes, twitterConfigured } from "./twitter.js";
 import { mountYoutubeRoutes, youtubeConfigured } from "./youtube.js";
 import { mountXRoutes, xAuthState } from "./x.js";
+import { collectLabelArms, fuseLabelResults } from "./labels.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -386,6 +387,10 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
+// After the first valid hedge result, wait this long for a second one so
+// agreeing boxes can be averaged. Bounded: worst case adds 450ms to a turn.
+const LABEL_FUSE_GRACE_MS = 450;
+
 // Labels-only sidecar for highlight turns. Runs in parallel with /api/chat so
 // boxes paint while the spoken reply is still generating (~1.4s vs ~2s+ combined).
 app.post("/api/labels", async (req, res) => {
@@ -423,31 +428,35 @@ app.post("/api/labels", async (req, res) => {
       .filter(Boolean)
       .join(" ");
 
-    const makeBody = (detail) =>
-      JSON.stringify({
-        model,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: system },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: `Locate: ${message}` },
-              {
-                type: "image_url",
-                image_url: { url: frames[frames.length - 1], detail },
-              },
-            ],
-          },
-        ],
-      });
+    const body = JSON.stringify({
+      model,
+      temperature: 0.2,
+      // Default effort burns 600–1500 hidden reasoning tokens on this task
+      // (15–40 s per call, measured 2026-08-08) without measurably better
+      // boxes; at low effort the model often skips reasoning entirely and
+      // answers in ~2 s.
+      reasoning_effort: "low",
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `Locate: ${message}` },
+            {
+              type: "image_url",
+              image_url: { url: frames[frames.length - 1], detail: "high" },
+            },
+          ],
+        },
+      ],
+    });
 
-    // Upstream vision latency is a per-request lottery (~1.5s fast path,
-    // 5–9s slow path) regardless of image detail, so hedge asymmetrically:
-    // one low-detail and one high-detail call, first result wins — about half
-    // of turns get sharper grounding for free.
-    const bodies = [makeBody("low"), makeBody("high")];
-    const controllers = [new AbortController(), new AbortController()];
+    // Even at low effort upstream latency is a lottery (~2 s when the model
+    // skips reasoning, ~9–17 s when it doesn't), so hedge three identical
+    // high-detail arms. First VALID result wins — a parse-failure arm can no
+    // longer beat a good one — and a short grace window collects a second
+    // result so agreeing boxes can be averaged (see server/labels.js).
+    const controllers = Array.from({ length: 3 }, () => new AbortController());
     const attempt = (i) =>
       fetch("https://api.x.ai/v1/chat/completions", {
         method: "POST",
@@ -455,41 +464,40 @@ app.post("/api/labels", async (req, res) => {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: bodies[i],
+        body,
         signal: controllers[i].signal,
       }).then(async (response) => {
         const data = await response.json();
         if (!response.ok) {
           throw new Error(data?.error?.message || "Labels request failed");
         }
-        return data;
+        const parsed = parseManualJson(
+          data?.choices?.[0]?.message?.content?.trim() || "",
+        );
+        return {
+          labels: Array.isArray(parsed.labels) ? parsed.labels : [],
+          link:
+            parsed.link && typeof parsed.link === "object" ? parsed.link : null,
+          status: typeof parsed.status === "string" ? parsed.status : null,
+        };
       });
 
-    let data;
-    try {
-      data = await Promise.any(controllers.map((_, i) => attempt(i)));
-    } catch (err) {
-      console.error("Labels error:", err.errors?.[0] || err);
-      return res.status(502).json({
-        error: err.errors?.[0]?.message || "Labels request failed",
-      });
-    } finally {
-      for (const c of controllers) c.abort();
+    const results = await collectLabelArms(
+      controllers.map((_, i) => attempt(i)),
+      LABEL_FUSE_GRACE_MS,
+    );
+    for (const c of controllers) c.abort();
+    if (!results.length) {
+      console.error("Labels error: all hedge arms failed");
+      return res.status(502).json({ error: "Labels request failed" });
     }
 
-    const raw = data?.choices?.[0]?.message?.content?.trim() || "";
-    let labels = [];
-    let link = null;
-    let status = null;
-    try {
-      const parsed = parseManualJson(raw);
-      labels = Array.isArray(parsed.labels) ? parsed.labels : [];
-      link =
-        parsed.link && typeof parsed.link === "object" ? parsed.link : null;
-      status = typeof parsed.status === "string" ? parsed.status : null;
-    } catch {
-      labels = [];
-    }
+    const withBoxes = results.filter((r) => r.labels.length > 0);
+    const chosen =
+      withBoxes.length >= 2
+        ? fuseLabelResults(withBoxes[0], withBoxes[1])
+        : (withBoxes[0] ?? results[0]);
+    let { labels, link, status } = chosen;
 
     // Plausibility guard: a "tight" reticle never covers half the frame.
     labels = labels.filter((l) => {
@@ -504,7 +512,9 @@ app.post("/api/labels", async (req, res) => {
       return true;
     });
 
-    console.log(`[labels] upstream ${Math.round(performance.now() - t0)}ms`);
+    console.log(
+      `[labels] upstream ${Math.round(performance.now() - t0)}ms valid=${results.length}${withBoxes.length >= 2 ? " fused" : ""}`,
+    );
     res.json({ labels, link, status, model });
   } catch (err) {
     console.error(err);
@@ -861,105 +871,168 @@ app.post("/api/verify", async (req, res) => {
     const afterFrame = String(req.body?.afterFrame || "");
     const videoTitle = String(req.body?.videoTitle || "").trim();
     const manualStepText = String(req.body?.manualStepText || "").trim();
+    const processSteps = Array.isArray(req.body?.processSteps)
+      ? req.body.processSteps
+          .map((s) => String(s || "").replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+          .slice(0, 12)
+      : [];
+    const watchFor = Array.isArray(req.body?.watchFor)
+      ? req.body.watchFor
+          .map((s) => String(s || "").replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+          .slice(0, 12)
+      : [];
+    const sceneHint = String(req.body?.sceneHint || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 600);
+    const currentTime = Number(req.body?.currentTime);
 
     if (!goal || !instruction) {
       return res.status(400).json({ error: "goal and instruction are required" });
     }
-    if (!beforeFrame.startsWith("data:image") || !afterFrame.startsWith("data:image")) {
-      return res.status(400).json({ error: "before and after frames are required" });
+    if (!afterFrame.startsWith("data:image")) {
+      return res.status(400).json({ error: "after frame is required" });
+    }
+
+    // Catalog checklist path: one frame + authored steps (fast). Full task
+    // path still wants BEFORE when the client sent one.
+    const checklistMode = processSteps.length > 0;
+    const hasBefore =
+      !checklistMode && beforeFrame.startsWith("data:image");
+    if (!checklistMode && !hasBefore) {
+      return res
+        .status(400)
+        .json({ error: "before and after frames are required" });
     }
 
     const model = "grok-4.5";
+    const t0 = performance.now();
     const system = [
-      "You verify whether a worker completed a guided physical task by comparing two real video frames.",
-      "Be conservative and truthful. Output ONLY valid JSON with no markdown matching:",
+      checklistMode
+        ? "You verify a physical workflow from ONE current video frame plus a process checklist and layout hints."
+        : "You verify whether a worker completed a guided physical task by comparing two real video frames.",
+      "Be decisive and fast. Output ONLY valid JSON with no markdown matching:",
       '{"verdict":"complete|not_complete|not_visible|unsafe_to_judge","spoken":"at most 2 short spoken sentences","attention":{"text":"short label","kind":"zone","x":0,"y":0,"w":0,"h":0}|null}',
-      "BEFORE is the frame captured when guidance was given. AFTER is the frame captured when the worker asked for verification.",
-      'If the relevant target is not clearly identifiable in either frame, verdict must be "not_visible".',
-      'If correctness depends on something the frames cannot establish — including torque, seating depth, energized state, pressure, hidden fit, or any safety-critical condition — verdict must be "unsafe_to_judge".',
-      'Under uncertainty, choose "not_visible" or "unsafe_to_judge"; never lean toward "complete".',
-      'Use "complete" only when the visible evidence clearly demonstrates the requested result.',
-      'Use "not_complete" only when the frames visibly show a specific correctable problem.',
-      'attention is allowed only for "not_complete". It must be one normalized 0–1 zone around the exact problem; otherwise return null.',
-      "The spoken field must state the verdict naturally without coordinates and without claiming access to anything outside these frames.",
-      "The spoken field goes straight to text-to-speech: plain prose only, no markdown, asterisks, or formatting characters.",
-      "Whatever the verdict, the spoken line is confident and forward-moving: lead with the call or the one thing to do or show next. Never apologize, never dwell on what you cannot see — for not_visible, just tell the worker what to point the camera at.",
+      checklistMode
+        ? "Judge the CURRENT frame. Layout hints name where things usually are — they are not a verdict. Portafilter = handled basket that docks into the group head. Tamper = smaller separate metal press on the counter. If the portafilter is locked into the group head AND the tamper still sits unused on the counter, verdict is not_complete (they skipped tamping). Never say the portafilter is on the table when it is in the group head. On a clearly visible espresso bar, prefer complete or not_complete — use not_visible only if the frame is black, blank, or not an espresso scene at all."
+        : "BEFORE is earlier context. AFTER is when the worker asked — prioritize AFTER. Under uncertainty choose not_visible or unsafe_to_judge; never lean toward complete.",
+      'If correctness depends on torque, pressure, or other out-of-frame state, verdict must be "unsafe_to_judge".',
+      'attention is allowed only for "not_complete" (one normalized 0–1 zone); otherwise null.',
+      "spoken: plain prose for TTS, confident and forward-moving, no coordinates, no markdown. Do not say you cannot see the group head when a coffee machine is in frame — call the step miss or the done state.",
     ].join(" ");
+
+    const checklist = checklistMode
+      ? processSteps.map((step, i) => `${i + 1}. ${step}`).join("\n")
+      : "";
+    const failureModes =
+      watchFor.length > 0
+        ? watchFor.map((item) => `- ${item}`).join("\n")
+        : "";
 
     const context = [
       `Worker goal: ${goal}`,
-      `Guidance that was spoken: ${instruction}`,
+      `Guidance / process: ${instruction}`,
+      checklist ? `Expected process checklist:\n${checklist}` : "",
+      failureModes
+        ? `Known failure modes to flag if clearly visible:\n${failureModes}`
+        : "",
+      sceneHint ? `Scene layout hint (orientation only): ${sceneHint}` : "",
+      Number.isFinite(currentTime)
+        ? `Video playhead: ${currentTime.toFixed(1)}s`
+        : "",
       videoTitle ? `Video title: ${videoTitle}` : "",
       manualStepText ? `Current manual step: ${manualStepText}` : "",
-      "The first attached image is BEFORE, captured when the guidance was given.",
-      "The second attached image is AFTER, captured when the worker asked to verify.",
-      "Compare BEFORE with AFTER and return the verification JSON.",
+      checklistMode
+        ? "The attached image is the CURRENT frame when the worker asked to verify. Return the verification JSON."
+        : "The first attached image is BEFORE. The second is AFTER. Return the verification JSON.",
     ]
       .filter(Boolean)
       .join("\n");
 
-    const response = await fetch("https://api.x.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
+    const userContent = [
+      { type: "text", text: context },
+      ...(hasBefore
+        ? [
+            {
+              type: "image_url",
+              image_url: { url: beforeFrame, detail: "low" },
+            },
+          ]
+        : []),
+      {
+        type: "image_url",
+        image_url: { url: afterFrame, detail: "low" },
       },
-      body: JSON.stringify({
-        model,
-        temperature: 0.1,
-        messages: [
-          { role: "system", content: system },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: context },
-              {
-                type: "image_url",
-                image_url: { url: beforeFrame, detail: "low" },
-              },
-              {
-                type: "image_url",
-                image_url: { url: afterFrame, detail: "low" },
-              },
-            ],
-          },
-        ],
-      }),
+    ];
+
+    const body = JSON.stringify({
+      model,
+      temperature: 0.1,
+      reasoning_effort: "low",
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userContent },
+      ],
     });
 
-    const data = await response.json();
-    if (!response.ok) {
-      console.error("Verify error:", data);
-      return res.status(response.status).json({
-        error: data?.error?.message || "Verification request failed",
+    // Hedge the upstream latency lottery — first valid JSON wins.
+    const controllers = [new AbortController(), new AbortController()];
+    const attempt = (i) =>
+      fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body,
+        signal: controllers[i].signal,
+      }).then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(
+            data?.error?.message || "Verification request failed",
+          );
+        }
+        const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+        const parsed = parseManualJson(raw);
+        const verdicts = new Set([
+          "complete",
+          "not_complete",
+          "not_visible",
+          "unsafe_to_judge",
+        ]);
+        const verdict = String(parsed.verdict || "");
+        const spoken = stripSpokenMarkdown(parsed.spoken || "");
+        if (!verdicts.has(verdict) || !spoken) {
+          throw new Error("Invalid verification contract");
+        }
+        const attention =
+          verdict === "not_complete" &&
+          parsed.attention &&
+          typeof parsed.attention === "object"
+            ? parsed.attention
+            : null;
+        return { verdict, spoken, attention, model };
       });
+
+    let result;
+    try {
+      result = await Promise.any(controllers.map((_, i) => attempt(i)));
+    } catch (err) {
+      console.error("Verify error:", err.errors?.[0] || err);
+      return res.status(502).json({
+        error: err.errors?.[0]?.message || "Verification request failed",
+      });
+    } finally {
+      for (const c of controllers) c.abort();
     }
 
-    try {
-      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
-      const parsed = parseManualJson(raw);
-      const verdicts = new Set([
-        "complete",
-        "not_complete",
-        "not_visible",
-        "unsafe_to_judge",
-      ]);
-      const verdict = String(parsed.verdict || "");
-      const spoken = stripSpokenMarkdown(parsed.spoken || "");
-      if (!verdicts.has(verdict) || !spoken) {
-        throw new Error("Invalid verification contract");
-      }
-      const attention =
-        verdict === "not_complete" &&
-        parsed.attention &&
-        typeof parsed.attention === "object"
-          ? parsed.attention
-          : null;
-      return res.json({ verdict, spoken, attention, model });
-    } catch (err) {
-      console.error("Verify response parse error:", err);
-      return res.status(502).json({ error: "unverifiable_response" });
-    }
+    console.log(
+      `[verify] ${checklistMode ? "checklist" : "task"} ${Math.round(performance.now() - t0)}ms`,
+    );
+    return res.json(result);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Verification failed" });
