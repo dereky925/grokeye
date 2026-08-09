@@ -3279,3 +3279,136 @@ video {
     transform: rotate(380deg);
   }
 }
+
+/* "Ask X" approval card — glass panel like the manual overlay. */
+.xpost-card {
+  position: absolute;
+  right: 16px;
+  bottom: 76px;
+  z-index: 56;
+  width: min(320px, calc(100vw - 24px));
+  padding: 0.75rem 0.85rem 0.7rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 10, 12, 0.82);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  animation: rise 0.3s ease both;
+  pointer-events: auto;
+}
+
+.xpost-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.xpost-kicker {
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.xpost-close {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.15rem 0.2rem;
+  font-size: 0.78rem;
+}
+
+.xpost-close:hover {
+  color: var(--text);
+}
+
+.xpost-question {
+  margin: 0 0 0.5rem;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 0.98rem;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.xpost-collage {
+  display: block;
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.xpost-collage.is-loading {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 2 / 1;
+  color: var(--muted);
+  font-size: 0.8rem;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.xpost-caption {
+  margin: 0.55rem 0 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--text);
+  opacity: 0.9;
+}
+
+.xpost-error {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: #ff9d8a;
+}
+
+.xpost-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.xpost-post,
+.xpost-skip {
+  flex: 1;
+  padding: 0.45rem 0.6rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.xpost-post {
+  background: rgba(255, 255, 255, 0.92);
+  color: #0a0a0c;
+  font-weight: 600;
+}
+
+.xpost-post:disabled,
+.xpost-skip:disabled {
+  opacity: 0.5;
+}
+
+.xpost-skip {
+  background: transparent;
+  color: var(--text);
+}
+
+.xpost-hint {
+  margin: 0.45rem 0 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.xpost-result {
+  margin-top: 0.55rem;
+  font-size: 0.85rem;
+}
+
+.xpost-result a {
+  color: inherit;
+  text-decoration: underline;
+}
