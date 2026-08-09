@@ -80,7 +80,15 @@ import {
 import { cropSprite, fetchGhost } from "../lib/ghost";
 import GhostOverlay from "./GhostOverlay";
 import FlipReview from "./FlipReview";
+import StepReviewPanel from "./StepReviewPanel";
 import { fetchFlipReview, selectAttemptFrames, wantsFlipReview } from "../lib/flip";
+import {
+  captureStepFrames,
+  fetchStepReview,
+  fetchVideoScript,
+  selectReviewStep,
+  wantsStepReview,
+} from "../lib/stepReview";
 import { useWorkWatcher } from "../hooks/useWorkWatcher";
 import {
   WATCH_FLUSH_GRACE_MS,
@@ -134,6 +142,7 @@ import XPostCard from "./XPostCard";
 import type {
   FlipReviewState,
   GhostState,
+  StepReviewState,
   GuidanceCue,
   HighlightLabel,
   HighlightLink,
@@ -290,7 +299,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   // Proactive work-watcher: default ON for catalog clips, hard OFF for
   // live/flip. Machine-initiated speech goes through decideProactiveSpeech.
   const [watchEnabled, setWatchEnabled] = useState(!live && flipMode === false);
-  const [watchArmedLabel, setWatchArmedLabel] = useState<string | null>(null);
+  // Value is unread today; the setter keeps the watcher's armed signal wired.
+  const [, setWatchArmedLabel] = useState<string | null>(null);
   const watchEnabledRef = useRef(watchEnabled);
   const phaseRef = useRef<VoicePhase>("idle");
   const scanningRef = useRef(false);
@@ -330,6 +340,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   });
   const [flipReview, setFlipReview] = useState<FlipReviewState | null>(null);
   const flipReviewRef = useRef<FlipReviewState | null>(null);
+  const [stepReview, setStepReview] = useState<StepReviewState | null>(null);
+  const stepReviewRef = useRef<StepReviewState | null>(null);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const youtubeOpenRef = useRef(false);
   const [youtubeSeek, setYoutubeSeek] = useState<{
@@ -1461,6 +1473,65 @@ export default function VideoPlayer({ video, onBack }: Props) {
             }
           }
           return;
+        }
+
+        // Step correctness — "how did I do on that step?" Judges ONE step:
+        // asking in the first half of a step means the step that just
+        // finished, second half means the current one. The answer is visual,
+        // not spoken: the panel shows the frames it judged plus a written
+        // verdict, so nothing goes to TTS or the voice bubble. Flip mode owns
+        // its own "how did I do" above.
+        if (!flipMode && !live && wantsStepReview(heard)) {
+          const script = await fetchVideoScript(video.id);
+          if (sessionId !== sessionRef.current) return;
+          if (script) {
+            stampTurn("verify", { question: heard });
+            const step = selectReviewStep(script, turnTime);
+            const opening: StepReviewState = {
+              review: null,
+              strip: [],
+              loading: true,
+              stepNumber: step.n,
+              stepText: step.text,
+              x: stepReviewRef.current?.x ?? 24,
+              y: stepReviewRef.current?.y ?? 360,
+            };
+            setStepReview(opening);
+            stepReviewRef.current = opening;
+
+            try {
+              const frames = await captureStepFrames(
+                video.src,
+                step.start,
+                step.end,
+              );
+              if (sessionId !== sessionRef.current) return;
+              const withStrip = { ...opening, strip: frames };
+              setStepReview(withStrip);
+              stepReviewRef.current = withStrip;
+
+              const review = await fetchStepReview({
+                videoId: video.id,
+                stepNumber: step.n,
+                question: heard,
+                frames,
+              });
+              if (sessionId !== sessionRef.current) return;
+              const done: StepReviewState = {
+                ...withStrip,
+                review,
+                loading: false,
+              };
+              setStepReview(done);
+              stepReviewRef.current = done;
+            } catch (err) {
+              if (sessionId !== sessionRef.current) return;
+              setStepReview(null);
+              stepReviewRef.current = null;
+              throw err;
+            }
+            return;
+          }
         }
 
         const visualSubjectHint = [heard, ...alternatives]
@@ -2902,6 +2973,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
           onClose={() => {
             setFlipReview(null);
             flipReviewRef.current = null;
+          }}
+        />
+      )}
+
+      {stepReview && (
+        <StepReviewPanel
+          state={stepReview}
+          onChangePosition={(x, y) => {
+            setStepReview((r) => {
+              if (!r) return r;
+              const next = { ...r, x, y };
+              stepReviewRef.current = next;
+              return next;
+            });
+          }}
+          onClose={() => {
+            setStepReview(null);
+            stepReviewRef.current = null;
           }}
         />
       )}

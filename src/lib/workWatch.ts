@@ -238,39 +238,87 @@ export function createBoundaryTracker(tuning: WatchTuning = WATCH_TUNING) {
   };
 }
 
+/** Frames covering the action itself, on top of the one pre-action frame. */
+export const WATCH_ACTION_FRAMES = 8;
+
+export type WatchStrip = {
+  /** Chronological frames: the pre-action frame first when present. */
+  frames: string[];
+  /**
+   * How many leading frames predate the action. The watcher must not read
+   * current state off these — the whole point is that they are stale.
+   */
+  preCount: number;
+};
+
 /**
- * Frames for the /api/watch call: state before the action, the action at its
- * peak, and the freshly captured settled frame the verdict is about. At most
- * three, chronological, deduped.
+ * Frames for the /api/watch call.
+ *
+ * One frame from before the action (for before/after comparison only), then a
+ * dense run across the action itself ending on the freshly captured settled
+ * frame. Judging current state from three sparse frames was how the watcher
+ * ended up announcing an "empty portafilter" from a stale pre-dose frame.
  */
 export function selectWatchFrames(
   frames: BufferedFrame[],
   boundary: Pick<ActionBoundary, "actionStart" | "peakTime">,
   freshSettled: string | null,
-): string[] {
+): WatchStrip {
   const usable = frames.filter((f) => f.url);
+
   let pre: BufferedFrame | null = null;
   for (const f of usable) {
     if (f.mediaTime < boundary.actionStart) pre = f;
     else break;
   }
-  if (!pre && usable.length) pre = usable[0];
 
+  // Everything from the action onward, thinned evenly to a budget so a long
+  // action doesn't blow the payload.
+  const during = usable.filter((f) => f.mediaTime >= boundary.actionStart);
+  const picked: BufferedFrame[] = [];
+  if (during.length <= WATCH_ACTION_FRAMES) {
+    picked.push(...during);
+  } else {
+    for (let i = 0; i < WATCH_ACTION_FRAMES; i++) {
+      const idx = Math.round((i * (during.length - 1)) / (WATCH_ACTION_FRAMES - 1));
+      const f = during[idx];
+      if (f && !picked.includes(f)) picked.push(f);
+    }
+  }
+
+  // The peak-motion frame is the most informative single frame; make sure the
+  // thinning never drops it.
   let peakFrame: BufferedFrame | null = null;
   let bestDelta = Infinity;
-  for (const f of usable) {
+  for (const f of during) {
     const d = Math.abs(f.mediaTime - boundary.peakTime);
     if (d < bestDelta) {
       bestDelta = d;
       peakFrame = f;
     }
   }
+  if (peakFrame && !picked.includes(peakFrame)) {
+    picked.push(peakFrame);
+    picked.sort((a, b) => a.mediaTime - b.mediaTime);
+  }
 
   const out: string[] = [];
-  for (const url of [pre?.url, peakFrame?.url, freshSettled]) {
-    if (url && !out.includes(url)) out.push(url);
+  const preUrl = pre?.url ?? null;
+  if (preUrl) out.push(preUrl);
+  const preCount = out.length;
+  for (const f of picked) {
+    if (!out.includes(f.url)) out.push(f.url);
   }
-  return out.slice(-3);
+  if (freshSettled && !out.includes(freshSettled)) out.push(freshSettled);
+
+  // Nothing usable from the action window — fall back to whatever exists, but
+  // never claim a pre-action frame is current state.
+  if (out.length === preCount) {
+    const last = usable[usable.length - 1];
+    if (last && !out.includes(last.url)) out.push(last.url);
+  }
+
+  return { frames: out, preCount: out.length > preCount ? preCount : 0 };
 }
 
 /**
@@ -313,6 +361,8 @@ export type WatchRequest = {
   frames: string[];
   videoTitle: string;
   currentTime: number;
+  /** Leading frames that predate the action — context only, never state. */
+  preCount?: number;
   concern?: string;
   watchFor?: string[];
   region?: NormBox;

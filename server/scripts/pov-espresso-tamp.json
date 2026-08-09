@@ -1,0 +1,89 @@
+{
+  "videoId": "pov-espresso-tamp",
+  "title": "Dose, tamp, and lock",
+  "task": "dosing, tamping, and locking in an espresso portafilter",
+  "setting": "Top-down POV of a cafe espresso station on a light wood counter: a grinder beside a La Marzocco machine, knock box with spent grounds, metal tamper, syrup pumps, stacked cups, and a towel. The barista has tattooed forearms and wears a black long sleeve.",
+  "steps": [
+    {
+      "n": 1,
+      "start": 0,
+      "end": 7,
+      "text": "Dose and grind espresso into the portafilter",
+      "detail": "The barista holds the portafilter under the grinder while grounds fill the basket, hands moving between the grinder, knock box, and counter.",
+      "flags": [],
+      "expected": "Dose and grind into the portafilter basket; this is the correct first action."
+    },
+    {
+      "n": 2,
+      "start": 7,
+      "end": 13.9,
+      "text": "Lock the portafilter into the group head",
+      "detail": "The grounds-filled portafilter is carried to the La Marzocco and twisted into the group head with the coffee bed still loose and mounded.",
+      "flags": [
+        "locked in without tamping; loose mounded grounds visible"
+      ],
+      "expected": "The grounds must be TAMPED flat and firm BEFORE the portafilter goes into the group head. Locking in a loose, untamped bed is out of order."
+    },
+    {
+      "n": 3,
+      "start": 13.9,
+      "end": 24.3,
+      "text": "Pause at the station",
+      "detail": "The barista\u2019s hand rests near the knock box while the portafilter stays locked in the machine off to the right.",
+      "flags": [],
+      "expected": "Nothing should be resting in the group head untamped; the puck should have been tamped before locking in."
+    },
+    {
+      "n": 4,
+      "start": 24.3,
+      "end": 27.8,
+      "text": "Pull the portafilter back out",
+      "detail": "The portafilter is removed from the group head and brought over the counter, still showing an untamped bed of grounds.",
+      "flags": [],
+      "expected": "Pulling the portafilter back out is the correction for having locked it in untamped."
+    },
+    {
+      "n": 5,
+      "start": 27.8,
+      "end": 31.3,
+      "text": "Tamp the grounds level and firm",
+      "detail": "The tamper is picked up and pressed straight down into the portafilter basket against the counter edge.",
+      "flags": [],
+      "expected": "Tamp the bed flat and firm, tamper level, against a stable surface."
+    },
+    {
+      "n": 6,
+      "start": 31.3,
+      "end": 37,
+      "text": "Lock the tamped portafilter into the group head",
+      "detail": "The tamped portafilter is carried back to the La Marzocco and locked into the group head with a firm twist.",
+      "flags": [],
+      "expected": "Lock the now-tamped portafilter into the group head \u2014 this is the correct order."
+    },
+    {
+      "n": 7,
+      "start": 37,
+      "end": 41.7,
+      "text": "Rest with the portafilter ready",
+      "detail": "Hands come to rest near the knock box as the corrected, locked-in setup sits on the machine.",
+      "flags": [],
+      "expected": "With the tamped portafilter locked in, the shot should be started promptly."
+    }
+  ],
+  "afterClip": "start the espresso extraction",
+  "source": {
+    "title": "POV Espresso Bar",
+    "url": "/videos/pov-espresso-tamp.mp4",
+    "siteName": "GrokEye catalog"
+  },
+  "durationSeconds": 41.7,
+  "generated": true,
+  "frameCount": 12,
+  "procedure": [
+    "Dose and grind the coffee into the portafilter basket.",
+    "Level or distribute the grounds so the bed is even.",
+    "Tamp the bed flat and firm with the tamper before it goes anywhere near the machine.",
+    "Lock the tamped portafilter into the group head with a firm twist.",
+    "Start the shot promptly so the puck is not left sitting hot in the group."
+  ]
+}

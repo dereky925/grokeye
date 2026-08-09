@@ -17,6 +17,7 @@ import {
   WATCH_WINDOWS,
   WATCH_WINDOW_GRACE_S,
   findWatchWindows,
+  hasWatchWindows,
   nextWindowStart,
   type WatchWindow,
 } from "../lib/watchWindows";
@@ -161,6 +162,7 @@ export function useWorkWatcher(opts: {
       windows: WatchWindow[],
       frames: string[],
       settledFrame: string | null,
+      preCount = 0,
     ) => {
       const task = optsRef.current.getTask();
       const taskContext =
@@ -196,6 +198,7 @@ export function useWorkWatcher(opts: {
             ? windows.flatMap((w) => w.watchFor)
             : undefined,
           region: primary?.region,
+          preCount,
           taskContext,
         },
         record.controller.signal,
@@ -233,8 +236,14 @@ export function useWorkWatcher(opts: {
         if (debug()) console.log(`[watch] skip fire (${budgetCheck.reason})`);
         return;
       }
-      // Generic checks yield to an authored window arriving soon.
+      // Unauthored clips get no generic commentary. With no `concern` and no
+      // `watchFor` list the watcher is guessing, and a confident wrong call
+      // ("you locked an empty portafilter in") costs far more than the silence.
       if (!windows.length) {
+        if (!hasWatchWindows(videoId)) {
+          if (debug()) console.log("[watch] skip generic (clip has no windows)");
+          return;
+        }
         const next = nextWindowStart(videoId, mediaTime);
         if (
           next != null &&
@@ -245,9 +254,9 @@ export function useWorkWatcher(opts: {
         }
       }
       const settledFrame = captureFrame(el, { maxW: 640, quality: 0.62 });
-      const frames = selectWatchFrames(readWatchFrames(), boundary, settledFrame);
-      if (!frames.length) return;
-      fire(mediaTime, windows, frames, settledFrame);
+      const strip = selectWatchFrames(readWatchFrames(), boundary, settledFrame);
+      if (!strip.frames.length) return;
+      fire(mediaTime, windows, strip.frames, settledFrame, strip.preCount);
     };
 
     const fireWindowEnd = (w: WatchWindow) => {
@@ -261,7 +270,7 @@ export function useWorkWatcher(opts: {
       const frame = captureFrame(el, { maxW: 640, quality: 0.62 });
       if (!frame) return;
       const t = el.currentTime || 0;
-      fire(t, [w], [frame], frame);
+      fire(t, [w], [frame], frame, 0);
       // Window-end checks are static-state reads; there is no settle to wait
       // for, so let the verdict surface as soon as it lands.
       if (activeFire) activeFire.settled = true;
