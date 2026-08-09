@@ -23,7 +23,11 @@ import {
 } from "../hooks/useVoice";
 import { useSpeechLevel } from "../hooks/useSpeechLevel";
 import { useCameraStream } from "../hooks/useCameraStream";
-import { useFrameBuffer } from "../hooks/useFrameBuffer";
+import {
+  LIGHTWEIGHT_FRAME_BUFFER_OPTIONS,
+  type BufferedFrame,
+  useFrameBuffer,
+} from "../hooks/useFrameBuffer";
 import { useSpotifyPlayer } from "../hooks/useSpotifyPlayer";
 import { useTwitterFeed } from "../hooks/useTwitterFeed";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
@@ -58,13 +62,70 @@ import {
 } from "../lib/guidance";
 import { type CatalogMotionCue } from "../lib/choreography";
 import { resolveInstructionRoute } from "../lib/instructionRouting";
+import {
+  selectContextFrames,
+  wantsRecentVisualHistory,
+} from "../lib/frameMemory";
+import {
+  resolveVisualSubjectHint,
+  updateVisualMemory,
+  type GroundedReferentSource,
+  type VisualReferentMemory,
+} from "../lib/visualMemory";
 import { cropSprite, fetchGhost } from "../lib/ghost";
 import GhostOverlay from "./GhostOverlay";
 import FlipReview from "./FlipReview";
 import { fetchFlipReview, selectAttemptFrames, wantsFlipReview } from "../lib/flip";
+import { useWorkWatcher } from "../hooks/useWorkWatcher";
+import {
+  WATCH_FLUSH_GRACE_MS,
+  WATCH_FLUSH_RETRY_MS,
+  decideProactiveSpeech,
+  dedupeKey,
+  isEchoSafeCallout,
+  offerPending,
+  parseWatchAction,
+  takePending,
+  type PendingSlot,
+  type ProactiveFinding,
+  type WatchGate,
+} from "../lib/watchSpeech";
 import { parseSpotifyAction } from "../lib/spotify";
 import { parseTwitterAction } from "../lib/twitter";
 import { parseYoutubeAction } from "../lib/youtube";
+import {
+  appendTurn,
+  attachAfterFrames,
+  createLedger,
+  markEscalated,
+  markRouted,
+  nextEntryId,
+  recordVerdict,
+  selectAfterFrame,
+  selectAuditItems,
+  isActionable,
+  type LedgerEntryKind,
+  type SessionLedger,
+} from "../lib/sessionLedger";
+import {
+  buildEscalationPayloads,
+  parseAuditAction,
+  runAudit,
+  summarizeAudit,
+  type AuditItem,
+  type EscalationPayload,
+} from "../lib/audit";
+import {
+  composeCollage,
+  fallbackCaption,
+  fetchXCaption,
+  fetchXPost,
+  formatMediaTime,
+  isCardActionable,
+  parsePostAction,
+  type XPostCardState,
+} from "../lib/xpost";
+import XPostCard from "./XPostCard";
 import type {
   FlipReviewState,
   GhostState,
@@ -97,6 +158,30 @@ type PendingTask = {
   beforeFrame: string;
   instruction: string | null;
   link: HighlightLink[] | null;
+  /** Session-ledger entry this task's verdicts should write back to. */
+  entryId: string | null;
+};
+
+/**
+ * Per-turn accumulator for the session ledger. Branches stamp their kind with
+ * one line; the `finally` block appends the finished record. The entry id is
+ * pre-generated so async callbacks (labels link, verify) can reference it
+ * whether or not the append has happened yet.
+ */
+type TurnRecord = {
+  sessionId: number;
+  entryId: string;
+  kind: LedgerEntryKind;
+  question: string;
+  mediaTime: number;
+  askedAtT: number;
+  beforeFrame: string | null;
+  manualStepText?: string;
+  /** Branch-supplied answer for turns that never speak (widget nav). */
+  answer?: string;
+  /** lastSpokenRef at turn start — distinguishes this turn's speech from stale. */
+  spokenAtStart: string;
+  routed: boolean;
 };
 
 const WAKE_DUCK = 0.035;
@@ -136,6 +221,20 @@ function looksLikeEcho(heard: string, spoken: string) {
   return false;
 }
 
+const GENERIC_GROUNDED_SUBJECT_RE =
+  /^(?:it|this|that|object|thing|part|piece|pivot|move this|moving part|target)$/i;
+
+function pickGroundedSubject(...candidates: Array<string | null | undefined>) {
+  for (const candidate of candidates) {
+    const subject = String(candidate || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 96);
+    if (subject && !GENERIC_GROUNDED_SUBJECT_RE.test(subject)) return subject;
+  }
+  return null;
+}
+
 export default function VideoPlayer({ video, onBack }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -150,6 +249,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const highlightHoldRef = useRef(false);
   const speechFrameRef = useRef<string | null>(null);
   const speechTimeRef = useRef<number | null>(null);
+  const speechContextFramesRef = useRef<BufferedFrame[]>([]);
+  const visualMemoryRef = useRef<VisualReferentMemory | null>(null);
   const toolsRef = useRef<ToolsState | null>(null);
   const resumeAfterGhostRef = useRef(false);
   const ghostRef = useRef<GhostState | null>(null);
@@ -181,6 +282,29 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [cameraId, setCameraId] = useState<string | undefined>(undefined);
   const live = Boolean(video.live);
   const flipMode = video.mode === "flip";
+  // Proactive work-watcher: default ON for catalog clips, hard OFF for
+  // live/flip. Machine-initiated speech goes through decideProactiveSpeech.
+  const [watchEnabled, setWatchEnabled] = useState(!live && flipMode === false);
+  const [watchArmedLabel, setWatchArmedLabel] = useState<string | null>(null);
+  const watchEnabledRef = useRef(watchEnabled);
+  const phaseRef = useRef<VoicePhase>("idle");
+  const scanningRef = useRef(false);
+  const detectingRef = useRef(false);
+  const holdUntilRef = useRef<number | null>(null);
+  const announcedRef = useRef<Set<string>>(new Set());
+  const pendingSlotRef = useRef<PendingSlot | null>(null);
+  const flushTimerRef = useRef<number | null>(null);
+  const lastActivityAtRef = useRef<number | null>(null);
+  const lastProactiveEndedAtRef = useRef<number | null>(null);
+  const watchGenRef = useRef<() => number>(() => 0);
+  // Session verification: the per-video Q&A/action ledger, the in-flight turn
+  // accumulator, delayed after-frame timers, and the "ask X" approval queue.
+  const ledgerRef = useRef<SessionLedger>(createLedger(video.id));
+  const turnRecordRef = useRef<TurnRecord | null>(null);
+  const afterTimersRef = useRef<Map<string, number>>(new Map());
+  const endAuditFiredRef = useRef(false);
+  const [xQueue, setXQueue] = useState<XPostCardState[]>([]);
+  const xQueueRef = useRef<XPostCardState[]>([]);
   const camera = useCameraStream({
     enabled: live,
     videoRef,
@@ -191,6 +315,13 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const { read: readFlipFrames } = useFrameBuffer({
     enabled: live && flipMode,
     videoRef,
+  });
+  const { read: readContextFrames, clear: clearContextFrames } = useFrameBuffer({
+    enabled: !flipMode,
+    videoRef,
+    ...LIGHTWEIGHT_FRAME_BUFFER_OPTIONS,
+    maxW: 512,
+    quality: 0.5,
   });
   const [flipReview, setFlipReview] = useState<FlipReviewState | null>(null);
   const flipReviewRef = useRef<FlipReviewState | null>(null);
@@ -231,6 +362,87 @@ export default function VideoPlayer({ video, onBack }: Props) {
     flipReviewRef.current = flipReview;
   }, [flipReview]);
 
+  // Ref mirrors for the proactive-speech gate, which runs inside long-lived
+  // async closures (same house pattern as manualRef/taskRef above).
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+  useEffect(() => {
+    scanningRef.current = scanning;
+  }, [scanning]);
+  useEffect(() => {
+    detectingRef.current = detecting;
+  }, [detecting]);
+  useEffect(() => {
+    holdUntilRef.current = holdUntil;
+  }, [holdUntil]);
+  useEffect(() => {
+    watchEnabledRef.current = watchEnabled;
+  }, [watchEnabled]);
+
+  // A new clip is a fresh slate: per-clip default, empty announce set, no
+  // deferred callout carried across videos.
+  useEffect(() => {
+    setWatchEnabled(!live && !flipMode);
+    setWatchArmedLabel(null);
+    announcedRef.current.clear();
+    pendingSlotRef.current = null;
+  }, [flipMode, live, video.id]);
+
+  useEffect(() => {
+    xQueueRef.current = xQueue;
+  }, [xQueue]);
+
+  // The ledger is per-video conversational history: it survives seeks and
+  // loop-arounds (unlike frame geometry) and resets only on a video change.
+  useEffect(() => {
+    ledgerRef.current = createLedger(video.id);
+    turnRecordRef.current = null;
+    endAuditFiredRef.current = false;
+    setXQueue([]);
+    const timers = afterTimersRef.current;
+    return () => {
+      for (const timer of timers.values()) window.clearTimeout(timer);
+      timers.clear();
+    };
+  }, [video.id]);
+
+  useEffect(() => {
+    visualMemoryRef.current = null;
+    speechContextFramesRef.current = [];
+    clearContextFrames();
+
+    const el = videoRef.current;
+    if (!el) return;
+    const clearVisualContext = () => {
+      visualMemoryRef.current = null;
+      speechContextFramesRef.current = [];
+      clearContextFrames();
+    };
+    el.addEventListener("seeking", clearVisualContext);
+    return () => el.removeEventListener("seeking", clearVisualContext);
+  }, [clearContextFrames, video.id]);
+
+  const rememberVisualSubject = useCallback(
+    (
+      subjectInput: string | null | undefined,
+      source: GroundedReferentSource,
+      videoTimeSeconds: number,
+      cueId?: string,
+    ) => {
+      const subject = pickGroundedSubject(subjectInput);
+      if (!subject) return;
+      visualMemoryRef.current = updateVisualMemory(visualMemoryRef.current, {
+        videoId: video.id,
+        subject,
+        source,
+        cueId,
+        videoTimeSeconds,
+      });
+    },
+    [video.id],
+  );
+
   const commitTask = useCallback((next: TaskSession | null) => {
     taskRef.current = next;
     setTask(next);
@@ -253,6 +465,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         instruction: pending.instruction,
         beforeFrame: pending.beforeFrame,
         stage: "awaiting_action",
+        ledgerEntryId: pending.entryId ?? undefined,
       });
       pendingTaskRef.current = null;
     },
@@ -352,6 +565,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
     if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
     resumeIfAutoPaused();
     armMicSoon(350);
+    // An interruption is user activity — proactive callouts yield the floor.
+    lastActivityAtRef.current = performance.now();
   }, [armMicSoon, clearGhost, commitTask, resumeIfAutoPaused, stopTts]);
 
   // A guide without boxes (not visible / unsafe) still needs a bounded HUD
@@ -432,6 +647,529 @@ export default function VideoPlayer({ video, onBack }: Props) {
     [playAudioUrl],
   );
 
+  /** One-line branch stamp onto the in-flight turn record. */
+  const stampTurn = useCallback(
+    (kind: LedgerEntryKind, extra?: Partial<TurnRecord>) => {
+      const rec = turnRecordRef.current;
+      if (rec) Object.assign(rec, { kind }, extra);
+    },
+    [],
+  );
+
+  /**
+   * ~9s after an instructed action, pull the "what the user did" frames from
+   * the rolling buffer (zero API cost): the motion peak plus a settled after
+   * view. Falls back to a live grab when a seek or loop wiped the buffer.
+   */
+  const scheduleAfterCapture = useCallback(
+    (entryId: string, askedAtT: number) => {
+      const timers = afterTimersRef.current;
+      const existing = timers.get(entryId);
+      if (existing) window.clearTimeout(existing);
+      timers.set(
+        entryId,
+        window.setTimeout(() => {
+          timers.delete(entryId);
+          let { after, mid } = selectAfterFrame(readContextFrames(), askedAtT);
+          if (!after) {
+            const el = videoRef.current;
+            const url = el ? captureFrame(el, { maxW: 512, quality: 0.5 }) : null;
+            if (url) {
+              after = {
+                url,
+                t: performance.now(),
+                mediaTime: el?.currentTime ?? 0,
+                motion: 0,
+              };
+              mid = null;
+            }
+          }
+          ledgerRef.current = attachAfterFrames(
+            ledgerRef.current,
+            entryId,
+            after ? { url: after.url, t: after.t, mediaTime: after.mediaTime } : null,
+            mid ? { url: mid.url, t: mid.t, mediaTime: mid.mediaTime } : null,
+          );
+        }, 9000),
+      );
+    },
+    [readContextFrames],
+  );
+
+  const patchXCard = useCallback(
+    (clientToken: string, patch: Partial<XPostCardState>) => {
+      setXQueue((queue) =>
+        queue.map((card) =>
+          card.clientToken === clientToken ? { ...card, ...patch } : card,
+        ),
+      );
+    },
+    [],
+  );
+
+  const dismissXCard = useCallback((clientToken: string) => {
+    setXQueue((queue) => queue.filter((card) => card.clientToken !== clientToken));
+  }, []);
+
+  /**
+   * Queue an unverifiable action for a one-tap "ask X" post. The card shows a
+   * deterministic caption instantly; Grok's caption swaps in if it arrives
+   * before approval. Collage composition gates the Post button.
+   */
+  const enqueueXPost = useCallback(
+    (payload: EscalationPayload) => {
+      const clientToken = crypto.randomUUID();
+      setXQueue((queue) => [
+        ...queue,
+        {
+          clientToken,
+          question: payload.question,
+          caption: fallbackCaption(payload),
+          collageUrl: null,
+          status: "composing",
+          mediaTime: payload.mediaTime,
+        },
+      ]);
+      void composeCollage(payload.frames)
+        .then((collageUrl) => patchXCard(clientToken, { collageUrl, status: "pending" }))
+        .catch(() =>
+          patchXCard(clientToken, {
+            status: "failed",
+            error: "Couldn't build the frame collage.",
+          }),
+        );
+      void fetchXCaption({
+        question: payload.question,
+        instructionText: payload.instruction,
+        videoTitle: payload.videoTitle,
+        mediaTime: payload.mediaTime,
+      })
+        .then((caption) => {
+          setXQueue((queue) =>
+            queue.map((card) =>
+              card.clientToken === clientToken &&
+              (card.status === "composing" || card.status === "pending")
+                ? { ...card, caption }
+                : card,
+            ),
+          );
+        })
+        .catch(() => {
+          /* the fallback caption is already on the card */
+        });
+    },
+    [patchXCard],
+  );
+
+  /**
+   * Post the head card. Voice approvals pass their turn's sessionId so the
+   * outcome is spoken; button taps pass null (the visual state is feedback
+   * enough). The artifact survives every failure — the card keeps collage and
+   * caption, and the server's clientToken makes tap+voice double-fires safe.
+   */
+  const approveXPost = useCallback(
+    async (sessionId: number | null) => {
+      const card = xQueueRef.current[0];
+      if (!card || !isCardActionable(card) || !card.collageUrl || !card.caption) {
+        return;
+      }
+      // An identical caption 403s as duplicate content on retry — stamp the
+      // clip moment to make it honestly unique.
+      const text =
+        card.errorCode === "duplicate"
+          ? `${card.caption} · ${formatMediaTime(card.mediaTime)}`.slice(0, 280)
+          : card.caption;
+      patchXCard(card.clientToken, { status: "posting", error: undefined });
+      try {
+        const { url } = await fetchXPost({
+          imageDataUrl: card.collageUrl,
+          text,
+          clientToken: card.clientToken,
+        });
+        patchXCard(card.clientToken, { status: "posted", postedUrl: url });
+        window.setTimeout(() => dismissXCard(card.clientToken), 8000);
+        if (sessionId != null && sessionId === sessionRef.current) {
+          try {
+            await playSpoken("Posted — X is on it.", sessionId);
+          } catch {
+            /* the card already shows the live URL */
+          }
+        }
+      } catch (err) {
+        const failure = err as Error & { code?: string };
+        patchXCard(card.clientToken, {
+          status: "failed",
+          error: failure.message,
+          errorCode: failure.code,
+        });
+        if (sessionId != null && sessionId === sessionRef.current) {
+          const line =
+            failure.code === "reauth"
+              ? "X login expired — reconnect in the browser."
+              : "Posting failed — I kept the card, try again.";
+          try {
+            await playSpoken(line, sessionId);
+          } catch {
+            /* error already visible on the card */
+          }
+        }
+      }
+    },
+    [dismissXCard, patchXCard, playSpoken],
+  );
+
+  /**
+   * Whole-session audit: judge every unsettled instructed action with parallel
+   * /api/verify calls (verdicts land in the ledger as they resolve), escalate
+   * what stays unverifiable to the X queue, and speak a ≤3-sentence verdict.
+   * The spoken acknowledgment overlaps the upstream latency.
+   */
+  const runSessionAudit = useCallback(
+    async (sessionId: number) => {
+      const el = videoRef.current;
+      const entries = selectAuditItems(ledgerRef.current);
+      if (!entries.length) {
+        await playSpoken(
+          "Nothing to check yet — walk through a step with me first.",
+          sessionId,
+        );
+        return;
+      }
+
+      const items: AuditItem[] = [];
+      for (const entry of entries) {
+        let afterUrl = entry.afterFrame?.url ?? null;
+        // Previously failed items get a fresh look — the user may have fixed
+        // it since — and never-captured items get a last-chance live grab.
+        if (!afterUrl || entry.status === "failed") {
+          const grabbed = el ? captureFrame(el, { maxW: 512, quality: 0.5 }) : null;
+          if (grabbed) {
+            afterUrl = grabbed;
+            ledgerRef.current = attachAfterFrames(
+              ledgerRef.current,
+              entry.id,
+              { url: grabbed, t: performance.now(), mediaTime: el?.currentTime ?? 0 },
+              entry.midFrame,
+            );
+          }
+        }
+        if (!entry.beforeFrame || !afterUrl || !entry.answer) continue;
+        items.push({
+          entryId: entry.id,
+          goal: entry.question,
+          instruction: entry.answer,
+          beforeFrame: entry.beforeFrame,
+          afterFrame: afterUrl,
+          manualStepText: entry.manualStepText,
+        });
+      }
+      if (!items.length) {
+        await playSpoken(
+          "I couldn't get a clear view to check — ask me again in a moment.",
+          sessionId,
+        );
+        return;
+      }
+
+      setUsedVision(true);
+      // Fire the verifies before speaking: the ack TTS masks their latency,
+      // and verdicts persist as they land so a barge-in keeps partial results.
+      const auditPromise = runAudit(items, {
+        verify: fetchVerify,
+        videoTitle: video.title,
+        concurrency: 3,
+        onResult: (result) => {
+          if (sessionId !== sessionRef.current || !result.ok) return;
+          ledgerRef.current = recordVerdict(ledgerRef.current, result.entryId, {
+            verdict: result.verdict,
+            spoken: result.spoken,
+            source: "audit",
+            nowMs: Date.now(),
+          });
+        },
+      });
+      try {
+        await playSpoken("Let me look over what we did.", sessionId);
+      } catch {
+        /* the ack is a nicety */
+      }
+      if (sessionId !== sessionRef.current) return;
+      setPhase("thinking");
+
+      const results = await auditPromise;
+      if (sessionId !== sessionRef.current) return;
+
+      const payloads = buildEscalationPayloads(ledgerRef.current, video.title);
+      ledgerRef.current = markEscalated(
+        ledgerRef.current,
+        payloads.map((payload) => payload.entryId),
+      );
+      for (const payload of payloads) enqueueXPost(payload);
+
+      await playSpoken(
+        summarizeAudit(results, { escalations: payloads.length }),
+        sessionId,
+      );
+    },
+    [enqueueXPost, playSpoken, video.title],
+  );
+
+  /** End-of-video audit owns its own turn discipline (no utterance behind it). */
+  const runEndOfVideoAudit = useCallback(async () => {
+    const sessionId = ++sessionRef.current;
+    turnInFlightRef.current = true;
+    setError(null);
+    setReply("");
+    setPhase("thinking");
+    try {
+      await runSessionAudit(sessionId);
+    } catch {
+      /* machine-initiated — fail silently, the ledger keeps its state */
+    } finally {
+      if (sessionId === sessionRef.current) {
+        turnInFlightRef.current = false;
+        setPhase("idle");
+        setTtsAudio(null);
+        setUsedVision(false);
+        if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
+        armMicSoon(900);
+        lastActivityAtRef.current = performance.now();
+      }
+    }
+  }, [armMicSoon, runSessionAudit]);
+
+  // Catalog clips loop, so `ended` never fires — watch the playhead instead.
+  // Fires once per approach to the end, only when something is still worth
+  // checking; audited items leave the pool, so loops never nag.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || live) return;
+    const onTime = () => {
+      const duration = el.duration;
+      if (!Number.isFinite(duration) || duration <= 0) return;
+      const remaining = duration - el.currentTime;
+      if (remaining > 5) {
+        endAuditFiredRef.current = false;
+        return;
+      }
+      if (remaining > 0.8 || endAuditFiredRef.current) return;
+      if (phaseRef.current !== "idle" || turnInFlightRef.current) return;
+      if (!selectAuditItems(ledgerRef.current).length) return;
+      endAuditFiredRef.current = true;
+      void runEndOfVideoAudit();
+    };
+    el.addEventListener("timeupdate", onTime);
+    return () => el.removeEventListener("timeupdate", onTime);
+  }, [live, runEndOfVideoAudit, video.id]);
+
+  const buildWatchGate = useCallback((): WatchGate => {
+    const el = videoRef.current;
+    const now = performance.now();
+    return {
+      now,
+      watchEnabled: watchEnabledRef.current,
+      live,
+      flipMode,
+      tabHidden: document.hidden,
+      videoPaused: Boolean(el?.paused),
+      videoSeeking: Boolean(el?.seeking),
+      videoId: video.id,
+      playhead: el?.currentTime ?? 0,
+      seekEpoch: watchGenRef.current(),
+      phase: phaseRef.current,
+      turnInFlight: turnInFlightRef.current,
+      scanning: scanningRef.current,
+      detecting: detectingRef.current,
+      highlightHold:
+        highlightHoldRef.current ||
+        (holdUntilRef.current != null && holdUntilRef.current > now),
+      ghostActive: Boolean(ghostRef.current),
+      lastActivityAt: lastActivityAtRef.current,
+      lastProactiveEndedAt: lastProactiveEndedAtRef.current,
+      announced: announcedRef.current,
+    };
+  }, [flipMode, live, video.id]);
+
+  const paintWatchAttention = useCallback(
+    (f: ProactiveFinding) => {
+      if (!f.attention) return;
+      const placed = withLabelIds(
+        normalizeLabels([{ ...f.attention, kind: "zone" }], 1),
+      );
+      if (!placed.length) return;
+      clearHighlights();
+      highlightHoldRef.current = true;
+      setHighlightSeed(f.frame);
+      setHighlights(placed);
+    },
+    [clearHighlights],
+  );
+
+  // Deferred-callout retry loop. The function ref breaks the circular
+  // dependency between speakProactive (defers) and flushPendingWatch (retries).
+  const flushFnRef = useRef<() => void>(() => {});
+  const scheduleWatchFlush = useCallback((delayMs: number) => {
+    if (flushTimerRef.current != null) {
+      window.clearTimeout(flushTimerRef.current);
+    }
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = null;
+      flushFnRef.current();
+    }, delayMs);
+  }, []);
+
+  /**
+   * Machine-initiated speech. Order matters: synthesize TTS while claiming
+   * nothing (the listener stays live and the user wins any race), then
+   * re-check the gate and claim the turn in one synchronous block.
+   */
+  const speakProactive = useCallback(
+    async (f: ProactiveFinding) => {
+      let decision = decideProactiveSpeech(f, buildWatchGate());
+      if (decision.action === "drop") {
+        console.log(`[watch] callout dropped (${decision.reason}): ${f.id}`);
+        return;
+      }
+      if (decision.action === "defer") {
+        pendingSlotRef.current = offerPending(pendingSlotRef.current, f);
+        scheduleWatchFlush(WATCH_FLUSH_RETRY_MS);
+        return;
+      }
+
+      if (!isEchoSafeCallout(f.spoken)) {
+        // Speaking this could self-trigger the recognizer through the echo
+        // filter's command-word bypass — paint the zone, skip the voice.
+        console.warn("[watch] callout failed echo lint, zone only:", f.spoken);
+        announcedRef.current.add(dedupeKey(f));
+        paintWatchAttention(f);
+        setHoldUntil(performance.now() + 5000);
+        return;
+      }
+
+      const sessionSnapshot = sessionRef.current;
+      let audioUrl: string;
+      try {
+        audioUrl = await speakText(f.spoken);
+      } catch {
+        return;
+      }
+
+      // Anything the user started during synthesis wins.
+      decision = decideProactiveSpeech(f, buildWatchGate());
+      if (sessionRef.current !== sessionSnapshot || decision.action !== "speak") {
+        URL.revokeObjectURL(audioUrl);
+        if (
+          sessionRef.current === sessionSnapshot &&
+          decision.action === "defer"
+        ) {
+          pendingSlotRef.current = offerPending(pendingSlotRef.current, f);
+          scheduleWatchFlush(WATCH_FLUSH_RETRY_MS);
+        }
+        return;
+      }
+
+      const sessionId = ++sessionRef.current;
+      turnInFlightRef.current = true;
+      announcedRef.current.add(dedupeKey(f));
+      lastSpokenRef.current = f.spoken;
+      setMicArmed(false);
+      setUsedVision(true);
+      setReply(f.spoken);
+      setPhase("speaking");
+      paintWatchAttention(f);
+      if (f.relatedToTask && taskRef.current) {
+        commitTask({
+          ...taskRef.current,
+          stage: "awaiting_action",
+          verdict: "not_complete",
+        });
+        // The realtime watcher is an external verifier for the session audit.
+        const entryId = taskRef.current?.ledgerEntryId;
+        if (entryId) {
+          ledgerRef.current = recordVerdict(ledgerRef.current, entryId, {
+            verdict: "not_complete",
+            spoken: f.spoken,
+            source: "external",
+            nowMs: Date.now(),
+          });
+        }
+      }
+      try {
+        await playAudioUrl(audioUrl, sessionId);
+      } catch {
+        /* the amber zone is already on screen */
+      } finally {
+        if (sessionId === sessionRef.current) {
+          turnInFlightRef.current = false;
+          setPhase("idle");
+          setTtsAudio(null);
+          setUsedVision(false);
+          if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
+          if (highlightHoldRef.current) {
+            setHoldUntil(performance.now() + 2000);
+          }
+          armMicSoon(900);
+          const ended = performance.now();
+          lastProactiveEndedAtRef.current = ended;
+          lastActivityAtRef.current = ended;
+        }
+      }
+    },
+    [
+      armMicSoon,
+      buildWatchGate,
+      commitTask,
+      paintWatchAttention,
+      playAudioUrl,
+      scheduleWatchFlush,
+    ],
+  );
+
+  /** Retry a deferred callout; every attempt re-runs the full gate. */
+  const flushPendingWatch = useCallback(() => {
+    const f = takePending(pendingSlotRef.current, performance.now());
+    if (!f) {
+      pendingSlotRef.current = null;
+      return;
+    }
+    const decision = decideProactiveSpeech(f, buildWatchGate());
+    if (decision.action === "speak") {
+      pendingSlotRef.current = null;
+      void speakProactive(f);
+    } else if (decision.action === "defer") {
+      scheduleWatchFlush(WATCH_FLUSH_RETRY_MS);
+    } else {
+      pendingSlotRef.current = null;
+    }
+  }, [buildWatchGate, scheduleWatchFlush, speakProactive]);
+  flushFnRef.current = flushPendingWatch;
+
+  // When the stage frees up, give the user a grace beat to follow up first,
+  // then let a still-valid deferred callout through.
+  useEffect(() => {
+    if (phase !== "idle") return;
+    scheduleWatchFlush(WATCH_FLUSH_GRACE_MS);
+    return () => {
+      if (flushTimerRef.current != null) {
+        window.clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+    };
+  }, [phase, scheduleWatchFlush]);
+
+  const watcher = useWorkWatcher({
+    enabled: watchEnabled && !live && !flipMode,
+    videoRef,
+    videoId: video.id,
+    videoTitle: video.title,
+    getTask: () => taskRef.current,
+    onFinding: (f) => {
+      void speakProactive(f);
+    },
+    onArmedLabel: setWatchArmedLabel,
+  });
+  watchGenRef.current = watcher.getGeneration;
+
   const handleQuestion = useCallback(
     async (heard: string, alternatives: string[] = []) => {
       const sessionId = ++sessionRef.current;
@@ -439,6 +1177,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
       const el = videoRef.current;
       const turnTime = speechTimeRef.current ?? el?.currentTime ?? 0;
       turnInFlightRef.current = true;
+      turnRecordRef.current = {
+        sessionId,
+        entryId: nextEntryId(ledgerRef.current),
+        kind: "chat",
+        question: heard,
+        mediaTime: turnTime,
+        askedAtT: performance.now(),
+        beforeFrame: speechFrameRef.current,
+        spokenAtStart: lastSpokenRef.current,
+        routed: false,
+      };
       setTranscript(heard);
       setError(null);
       setReply("");
@@ -451,7 +1200,29 @@ export default function VideoPlayer({ video, onBack }: Props) {
       if (ghostRef.current) clearGhost();
 
       try {
+        // "Post it" / "skip" only exist while an ask-X card awaits a decision,
+        // so this outranks every other router without ever colliding.
+        const postAction = parsePostAction(
+          heard,
+          isCardActionable(xQueueRef.current[0]),
+        );
+        if (postAction) {
+          stampTurn("widget", {
+            answer: postAction === "post" ? "Approved the X post" : "Skipped the X post",
+          });
+          resumeIfAutoPaused();
+          if (postAction === "post") {
+            await approveXPost(sessionId);
+          } else {
+            const head = xQueueRef.current[0];
+            if (head) dismissXCard(head.clientToken);
+            await playSpoken("Okay, skipped.", sessionId);
+          }
+          return;
+        }
+
         const youtubeAction = parseYoutubeAction(heard, youtubeOpenRef.current);
+        if (youtubeAction) stampTurn("widget", { answer: "YouTube control" });
         if (youtubeAction?.type === "open_youtube") {
           setYoutubeOpen(true);
           youtubeOpenRef.current = true;
@@ -503,6 +1274,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
 
         const twitterAction = parseTwitterAction(heard, twitterOpenRef.current);
+        if (twitterAction) stampTurn("widget", { answer: "X feed control" });
         if (twitterAction?.type === "open_twitter") {
           setTwitterOpen(true);
           twitterOpenRef.current = true;
@@ -560,6 +1332,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
 
         const spotifyAction = parseSpotifyAction(heard, spotifyOpenRef.current);
+        if (spotifyAction) stampTurn("widget", { answer: "Spotify control" });
         if (spotifyAction?.type === "open_spotify" || spotifyAction?.type === "nudge_play") {
           setSpotifyOpen(true);
           spotifyOpenRef.current = true;
@@ -608,10 +1381,38 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
+        // Work-watcher voice toggle. Sits after the media widgets so their
+        // "watch X" grammar keeps winning; anchored on work/build nouns.
+        const watchAction = parseWatchAction(heard);
+        if (watchAction) {
+          stampTurn("widget");
+          resumeIfAutoPaused();
+          if (live || flipMode) {
+            await playSpoken("Watching isn't available on this feed.", sessionId);
+            return;
+          }
+          if (watchAction === "watch_on") {
+            setWatchEnabled(true);
+            await playSpoken("I'm watching your work now.", sessionId);
+          } else if (watchAction === "watch_off") {
+            setWatchEnabled(false);
+            pendingSlotRef.current = null;
+            await playSpoken("Okay, eyes off.", sessionId);
+          } else {
+            announcedRef.current.clear();
+            await playSpoken(
+              "Fresh eyes. I'll call things out again.",
+              sessionId,
+            );
+          }
+          return;
+        }
+
         // Flip coach owns "how did I do" while it is the active mode. The
         // attempt is already over, so this reads back through the frame buffer
         // instead of capturing now.
         if (flipMode && wantsFlipReview(heard)) {
+          stampTurn("flip");
           const picked = selectAttemptFrames(readFlipFrames());
           if (picked.length < 2) {
             setReply("I need to see a flip first — try one and ask again.");
@@ -657,6 +1458,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
+        const visualSubjectHint = [heard, ...alternatives]
+          .map((message) =>
+            resolveVisualSubjectHint(visualMemoryRef.current, {
+              message,
+              videoId: video.id,
+            }),
+          )
+          .find((subject): subject is string => Boolean(subject)) ?? null;
+
         const instructionRoute = resolveInstructionRoute({
           primary: heard,
           alternatives,
@@ -664,11 +1474,13 @@ export default function VideoPlayer({ video, onBack }: Props) {
           toolsOpen: Boolean(toolsRef.current),
           videoId: video.id,
           currentTime: turnTime,
+          subjectHint: visualSubjectHint,
         });
 
         // Catalog choreography has already won in resolveInstructionRoute.
         // Ghost remains the dynamic visual fallback for its narrower grammar.
         if (instructionRoute?.kind === "ghost" && el) {
+          stampTurn("ghost");
           el.pause();
           resumeAfterGhostRef.current = true;
           const frame = captureFrame(el, { maxW: 1024, quality: 0.8 });
@@ -731,6 +1543,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
           instructionRoute?.kind === "manual" ? instructionRoute.action : null;
 
         if (action) {
+          stampTurn(
+            action.type === "move_overlay" || action.type === "close_manual"
+              ? "widget"
+              : "manual_step",
+            { answer: "Manual overlay" },
+          );
           // Manual turns don't need the frozen frame — let it play under the card.
           resumeIfAutoPaused();
 
@@ -858,6 +1676,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
             const result = applyManualAction(manualRef.current, action, doc);
             setManual(result.state);
             manualRef.current = result.state;
+            if (result.state && !result.state.loading) {
+              stampTurn("manual_step", {
+                manualStepText:
+                  result.state.doc.steps[result.state.stepIndex]?.text,
+              });
+            }
             if (result.speak) {
               try {
                 await playSpoken(result.speak, sessionId);
@@ -871,6 +1695,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
           const result = applyManualAction(manualRef.current, action);
           setManual(result.state);
           manualRef.current = result.state;
+          if (
+            result.state &&
+            !result.state.loading &&
+            action.type !== "move_overlay" &&
+            action.type !== "close_manual"
+          ) {
+            stampTurn("manual_step", {
+              manualStepText:
+                result.state.doc.steps[result.state.stepIndex]?.text,
+            });
+          }
           // Read steps aloud; keep panel moves silent.
           if (result.speak && action.type !== "move_overlay") {
             try {
@@ -883,6 +1718,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         }
 
         if (wantsTools(heard)) {
+          stampTurn("toolkit");
           const m = manualRef.current;
           const stepText = m ? m.doc.steps[m.stepIndex]?.text : undefined;
           const stepNumber = m ? m.stepIndex + 1 : null;
@@ -938,6 +1774,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
         const toolsAction = parseToolsAction(heard, Boolean(toolkitRef.current));
         if (toolsAction) {
+          stampTurn("toolkit");
           // Checklist turns render in the dropdown — let the video keep playing.
           resumeIfAutoPaused();
           if (toolsAction.type === "close_tools") {
@@ -982,6 +1819,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
         const verifyAction = parseVerifyAction(heard);
         if (verifyAction) {
+          stampTurn("verify");
           resumeIfAutoPaused();
           const activeTask = taskRef.current;
           if (!activeTask) {
@@ -1041,6 +1879,19 @@ export default function VideoPlayer({ video, onBack }: Props) {
             verdict: verification.verdict,
           };
           commitTask(nextTask);
+          // Single-task verify and the session audit share one verdict store.
+          if (activeTask.ledgerEntryId) {
+            ledgerRef.current = recordVerdict(
+              ledgerRef.current,
+              activeTask.ledgerEntryId,
+              {
+                verdict: verification.verdict,
+                spoken: verification.spoken,
+                source: "single_verify",
+                nowMs: Date.now(),
+              },
+            );
+          }
 
           if (
             verification.verdict === "not_complete" &&
@@ -1066,6 +1917,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
+        // Whole-session review ("did I do everything right?"). Kept disjoint
+        // from the single-task verify grammar above, which retains priority.
+        if (parseAuditAction(heard)) {
+          stampTurn("audit");
+          resumeIfAutoPaused();
+          await runSessionAudit(sessionId);
+          return;
+        }
+
         const motionGuidance =
           instructionRoute?.kind === "catalog_motion" ||
           instructionRoute?.kind === "motion";
@@ -1082,9 +1942,18 @@ export default function VideoPlayer({ video, onBack }: Props) {
         // Web-fact turns skip frames entirely — the answer lives online, and
         // cached repeats come back before the video even notices.
         const webSearch = !motionGuidance && !highlight && needsWebSearch(heard);
+        const recentVisualHistory =
+          !motionGuidance && !highlight && wantsRecentVisualHistory(heard);
         const wantFrames =
-          !webSearch && (motionGuidance || highlight || needsVideoContext(heard));
+          !webSearch &&
+          (motionGuidance ||
+            highlight ||
+            recentVisualHistory ||
+            needsVideoContext(heard));
         setUsedVision(wantFrames);
+        if (motionGuidance) stampTurn("guidance");
+        else if (highlight) stampTurn("highlight");
+        else if (webSearch) stampTurn("web");
 
         // Non-visual turn: the freeze-on-speech pause isn't needed after all.
         if (!wantFrames) resumeIfAutoPaused();
@@ -1094,6 +1963,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         let duration = el && Number.isFinite(el.duration) ? el.duration : 0;
         let precomputed: Omit<HighlightLabel, "id">[] = [];
         let geomFrame: string | null = null;
+        const locateTarget = highlight ? extractLocateTarget(heard) : null;
 
         if (wantFrames && el) {
           // Prefer the snapshot taken at speech onset — the frame the user
@@ -1106,7 +1976,13 @@ export default function VideoPlayer({ video, onBack }: Props) {
                 ? { maxW: 768, quality: 0.62 }
                 : undefined,
             );
-          if (frame) frames = [frame];
+          if (frame) {
+            const buffered = speechContextFramesRef.current;
+            frames =
+              recentVisualHistory && buffered.length > 1
+                ? buffered.map((item) => item.url)
+                : [frame];
+          }
           if (highlight) {
             // Geometry rides a fresh end-of-utterance frame — the onset
             // snapshot is seconds stale by now and only the spoken reply
@@ -1130,6 +2006,21 @@ export default function VideoPlayer({ video, onBack }: Props) {
             // Known demo footage gets instant silhouette choreography: trace
             // the real object, then move the same outline. No model rectangle
             // and no geometry latency.
+            //
+            // The silhouettes are traced against one exact frame, so snap the
+            // playhead to it and hold there while the cue is on screen —
+            // otherwise the POV camera drifts and the outline lands mid-air.
+            // clearHighlights resumes playback when the cue exits.
+            if (el && !live) {
+              if (!el.paused) {
+                resumeAfterTurnRef.current = true;
+                el.pause();
+              }
+              if (Math.abs(el.currentTime - authoredMotion.previewAt) > 0.12) {
+                el.currentTime = authoredMotion.previewAt;
+              }
+              highlightHoldRef.current = true;
+            }
             setManual(null);
             manualRef.current = null;
             setTools(null);
@@ -1137,6 +2028,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
             setScanning(false);
             setCatalogMotionLeaving(false);
             setCatalogMotion(authoredMotion);
+            rememberVisualSubject(
+              authoredMotion.subject,
+              "catalog",
+              turnTime,
+              authoredMotion.id,
+            );
             setGuidanceCue({
               status: "ready",
               note: authoredMotion.note,
@@ -1149,6 +2046,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
               message: motionMessage,
               frame: frames[0],
               videoTitle: video.title,
+              subjectHint: visualSubjectHint,
             })
               .then((raw) => {
                 if (sessionId !== sessionRef.current) return;
@@ -1160,6 +2058,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
                   raw.status === "ready" && cue.status !== "ready"
                     ? []
                     : placed;
+                if (cue.status === "ready") {
+                  rememberVisualSubject(
+                    pickGroundedSubject(
+                      visualSubjectHint,
+                      placed[1]?.text,
+                      placed[0]?.text,
+                    ),
+                    "guidance",
+                    turnTime,
+                  );
+                }
                 highlightHoldRef.current = shown.length > 0;
                 setHighlightSeed(frames[0] ?? null);
                 setHighlights(shown);
@@ -1182,6 +2091,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
               beforeFrame: frames[0],
               instruction: null,
               link: null,
+              entryId: turnRecordRef.current?.entryId ?? null,
             };
           }
           setHighlights([]);
@@ -1199,6 +2109,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
               if (precomputed.length) {
                 highlightHoldRef.current = true;
                 setHighlights(withLabelIds(precomputed));
+                rememberVisualSubject(
+                  pickGroundedSubject(locateTarget, precomputed[0]?.text),
+                  "highlight",
+                  turnTime,
+                );
               }
             }
           }
@@ -1225,6 +2140,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
                   // tracker from it so they walk forward onto the live video.
                   setHighlightSeed(frames[0] ?? null);
                   setHighlights(withLabelIds(precomputed));
+                  rememberVisualSubject(
+                    pickGroundedSubject(locateTarget, precomputed[0]?.text),
+                    "highlight",
+                    turnTime,
+                  );
                 }
               }
             } catch (err) {
@@ -1240,7 +2160,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
         if (highlight && !precomputed.length && (geomFrame || frames.length)) {
           setScanning(true);
           const geomSeed = geomFrame ?? frames[0] ?? null;
-          const locateTarget = extractLocateTarget(heard);
+          const turnEntryId = turnRecordRef.current?.entryId ?? null;
           void fetchLabels({
             message: locateTarget ?? heard,
             frames: geomFrame ? [geomFrame] : frames,
@@ -1273,10 +2193,28 @@ export default function VideoPlayer({ video, onBack }: Props) {
               setHighlightSeed(geomSeed);
               setHighlights(placed);
               setHighlightLinks(links);
+              if (placed.length) {
+                rememberVisualSubject(
+                  pickGroundedSubject(
+                    locateTarget,
+                    visualSubjectHint,
+                    placed[0]?.text,
+                  ),
+                  "highlight",
+                  turnTime,
+                );
+              }
               const pending = pendingTaskRef.current;
               if (links.length && pending?.sessionId === sessionId) {
                 pending.link = links;
                 sealTaskIfReady(sessionId);
+              }
+              // A source→target link upgrades this locate turn into an
+              // auditable connection, whether or not the turn already ended.
+              if (links.length && turnEntryId) {
+                const rec = turnRecordRef.current;
+                if (rec?.entryId === turnEntryId) rec.routed = true;
+                else ledgerRef.current = markRouted(ledgerRef.current, turnEntryId);
               }
             })
             .catch(() => {
@@ -1294,6 +2232,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
               currentTime,
               duration,
               frames,
+              temporalContext: recentVisualHistory && frames.length > 1,
+              subjectHint: visualSubjectHint,
               lowDetail: highlight || motionGuidance,
               motionGuide: authoredMotion
                 ? {
@@ -1328,6 +2268,17 @@ export default function VideoPlayer({ video, onBack }: Props) {
         const audioUrl = await result.audioPromise;
         await playAudioUrl(audioUrl, sessionId);
 
+        // Keep a grounded follow-up referent alive for ten seconds after the
+        // spoken answer finishes, not merely from the start of model latency.
+        if (authoredMotion && sessionId === sessionRef.current) {
+          rememberVisualSubject(
+            authoredMotion.subject,
+            "catalog",
+            turnTime,
+            authoredMotion.id,
+          );
+        }
+
         // Callouts breathe ~2s past the voice, then fade and the video resumes.
         if (sessionId === sessionRef.current && highlightHoldRef.current) {
           setHoldUntil(performance.now() + 2000);
@@ -1347,6 +2298,39 @@ export default function VideoPlayer({ video, onBack }: Props) {
         resumeIfAutoPaused();
         await new Promise((r) => setTimeout(r, 2200));
       } finally {
+        // Every branch — early returns included — funnels through here, so
+        // this is the one place the session ledger records the finished turn.
+        const rec = turnRecordRef.current;
+        if (rec && rec.sessionId === sessionId && sessionId === sessionRef.current) {
+          const spokenNow = lastSpokenRef.current;
+          const answer =
+            spokenNow && spokenNow !== rec.spokenAtStart
+              ? spokenNow
+              : rec.answer ?? "";
+          if (answer) {
+            const { ledger, entryId } = appendTurn(ledgerRef.current, {
+              question: rec.question,
+              answer,
+              kind:
+                rec.routed && rec.kind === "highlight"
+                  ? "highlight_route"
+                  : rec.kind,
+              mediaTime: rec.mediaTime,
+              askedAtT: rec.askedAtT,
+              nowMs: Date.now(),
+              beforeFrame: rec.beforeFrame,
+              manualStepText: rec.manualStepText,
+            });
+            ledgerRef.current = ledger;
+            const entry = ledger.entries.find((item) => item.id === entryId);
+            if (entry && isActionable(entry)) {
+              scheduleAfterCapture(entryId, rec.askedAtT);
+            }
+          }
+        }
+        if (turnRecordRef.current?.sessionId === sessionId) {
+          turnRecordRef.current = null;
+        }
         if (sessionId === sessionRef.current) {
           turnInFlightRef.current = false;
           setPhase("idle");
@@ -1355,25 +2339,34 @@ export default function VideoPlayer({ video, onBack }: Props) {
           setUsedVision(false);
           speechFrameRef.current = null;
           speechTimeRef.current = null;
+          speechContextFramesRef.current = [];
           if (videoRef.current) videoRef.current.volume = WAKE_DUCK;
           // Placed callouts extend the freeze; clearHighlights resumes later.
           if (!highlightHoldRef.current) resumeIfAutoPaused();
           armMicSoon(900);
+          // The user just had the floor — hold proactive callouts briefly.
+          lastActivityAtRef.current = performance.now();
         }
       }
     },
     [
+      approveXPost,
       armMicSoon,
       clearGhost,
       clearHighlights,
       commitTask,
+      dismissXCard,
       flipMode,
       live,
       playAudioUrl,
       playSpoken,
       readFlipFrames,
+      rememberVisualSubject,
       resumeIfAutoPaused,
+      runSessionAudit,
+      scheduleAfterCapture,
       sealTaskIfReady,
+      stampTurn,
       spotify,
       twitter,
       youtube,
@@ -1414,11 +2407,22 @@ export default function VideoPlayer({ video, onBack }: Props) {
         if (el) {
           // Real-time mode: never pause. Snapshot the frame at speech onset —
           // it's the moment the user reacted to — and keep playback rolling.
-          speechFrameRef.current = captureFrame(el, {
+          const frame = captureFrame(el, {
             maxW: 768,
             quality: 0.62,
           });
-          speechTimeRef.current = el.currentTime || 0;
+          const mediaTime = el.currentTime || 0;
+          const capturedAt = performance.now();
+          speechFrameRef.current = frame;
+          speechTimeRef.current = mediaTime;
+          speechContextFramesRef.current = frame
+            ? selectContextFrames(readContextFrames(), {
+                url: frame,
+                t: capturedAt,
+                mediaTime,
+                motion: 0,
+              })
+            : [];
           el.volume = 0.02;
         }
       },
@@ -1646,7 +2650,23 @@ export default function VideoPlayer({ video, onBack }: Props) {
             Grok is watching
           </div>
         )}
+        {watchEnabled && !live && !flipMode && phase === "idle" && (
+          <div
+            className={`frame-freeze-chip watch-idle ${task ? "with-task" : ""}`}
+            aria-hidden
+          >
+            <span className="frame-freeze-dot" />
+            {watchArmedLabel ?? "Watching"}
+          </div>
+        )}
         {task && <TaskStateChip task={task} />}
+        {xQueue[0] && (
+          <XPostCard
+            card={xQueue[0]}
+            onPost={() => void approveXPost(null)}
+            onSkip={() => dismissXCard(xQueue[0].clientToken)}
+          />
+        )}
         {guidanceCue && (
           <GuidanceStatusChip
             cue={guidanceCue}

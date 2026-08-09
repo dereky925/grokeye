@@ -58,6 +58,20 @@ test("visible result checks attach the current frame", () => {
     "Have I bent this enough?",
     "Is this bent correctly?",
     "Does that look properly seated?",
+    "Am I doing this right?",
+    "Did she do that right?",
+  ]) {
+    assert.equal(needsVideoContext(message), true, message);
+  }
+});
+
+test("verification asks attach the current frame without a deictic word", () => {
+  for (const message of [
+    "What did she do wrong?",
+    "Did she make a mistake?",
+    "Did I mess up?",
+    "Did she forget something?",
+    "Did I miss a step?",
   ]) {
     assert.equal(needsVideoContext(message), true, message);
   }
@@ -121,6 +135,10 @@ test("explicit visible how-to requests trigger motion guidance", () => {
 
 test("visible part-placement questions trigger motion guidance", () => {
   for (const message of [
+    "Where do I put it?",
+    "Where to put it?",
+    "Where should I place it?",
+    "Where do I put the CPU?",
     "Where to build the leg?",
     "Where do I put this leg?",
     "Where should I place the leg?",
@@ -158,6 +176,8 @@ test("catalog motion wins over broad manual and ghost grammars", () => {
 
 test("IKEA leg placement resolves to the authored scene at speech onset", () => {
   for (const message of [
+    "Where do I put it?",
+    "Where to put it?",
     "Where to build the leg?",
     "Where do I put this leg?",
     "Where should I place the leg?",
@@ -182,12 +202,17 @@ test("IKEA placement stays object- and scene-grounded", () => {
     null,
   );
   assert.equal(
-    findCatalogChoreography("ikea", 14.999, "Where do I put the leg?")?.id,
-    "ikea-place-leg-frame",
+    findCatalogChoreography("ikea", 6, "Where do I put this screw?"),
+    null,
   );
   assert.equal(
+    findCatalogChoreography("ikea", 8.149, "Where do I put the leg?")?.id,
+    "ikea-place-leg-frame",
+  );
+  assert.equal(findCatalogChoreography("ikea", 8.15, "Where do I put the leg?"), null);
+  assert.equal(
     findCatalogChoreography("ikea", 15, "Where do I put the leg?")?.id,
-    "ikea-seat-side-rail",
+    "ikea-seat-leg-frame",
   );
 
   const general = resolveInstructionRoute({
@@ -199,6 +224,49 @@ test("IKEA placement stays object- and scene-grounded", () => {
   });
   assert.equal(general?.kind, "manual");
   assert.equal(general?.action.type, "open_manual");
+});
+
+test("CPU placement uses truthful authored cues at the reported timestamps", () => {
+  const cases = [
+    [4, "Where do I put it?", "cpu-unbox-before-placement"],
+    [4, "Where to put the CPU?", "cpu-unbox-before-placement"],
+    [55, "Where do I put it?", "cpu-align-to-open-socket"],
+    [55, "Where do I put the CPU?", "cpu-align-to-open-socket"],
+    [56, "Where should I place it?", "cpu-lower-over-socket"],
+  ];
+
+  for (const [currentTime, message, cueId] of cases) {
+    const route = resolveInstructionRoute({
+      primary: message,
+      alternatives: [],
+      manualOpen: false,
+      toolsOpen: false,
+      videoId: "pov-pc-build-cpu-ram",
+      currentTime,
+      subjectHint: "CPU",
+    });
+    assert.equal(route?.kind, "catalog_motion", message);
+    assert.equal(route?.cue.id, cueId, message);
+  }
+
+  assert.equal(
+    findCatalogChoreography(
+      "pov-pc-build-cpu-ram",
+      55,
+      "Where do I put this RAM stick?",
+      "CPU",
+    ),
+    null,
+  );
+  const outside = resolveInstructionRoute({
+    primary: "Where do I put it?",
+    alternatives: [],
+    manualOpen: false,
+    videoId: "pov-pc-build-cpu-ram",
+    currentTime: 60,
+    subjectHint: "CPU",
+  });
+  assert.equal(outside?.kind, "motion");
 });
 
 test("unknown visible motion avoids accidental manual opening", () => {
@@ -352,6 +420,14 @@ test("known plumbing scene bypasses model geometry with a pipe silhouette", () =
   assert.ok(cue?.outline.length > 150);
   assert.ok(cue?.destination.length > 150);
   assert.notEqual(cue?.outline, cue?.destination);
+  assert.equal(
+    findCatalogChoreography(
+      "pov-copper-plumbing",
+      2,
+      "Show me how to turn this clockwise",
+    )?.id,
+    "plumbing-bend-copper",
+  );
 });
 
 test("authored choreography covers every catalog video and is documented", () => {

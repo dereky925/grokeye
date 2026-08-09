@@ -8,6 +8,7 @@ import { fileURLToPath } from "url";
 import { mountSpotifyRoutes, spotifyConfigured } from "./spotify.js";
 import { mountTwitterRoutes, twitterConfigured } from "./twitter.js";
 import { mountYoutubeRoutes, youtubeConfigured } from "./youtube.js";
+import { mountXRoutes, xAuthState } from "./x.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +29,7 @@ app.use(express.json({ limit: "12mb" }));
 mountSpotifyRoutes(app);
 mountTwitterRoutes(app);
 mountYoutubeRoutes(app);
+mountXRoutes(app, { xaiApiKey: apiKey });
 
 const manifestPath = path.join(root, "public", "videos", "manifest.json");
 const detectBase = process.env.DETECT_URL || "http://127.0.0.1:8790";
@@ -91,6 +93,7 @@ app.get("/api/health", async (_req, res) => {
     detector,
     spotify: { configured: spotifyConfigured() },
     twitter: { configured: twitterConfigured() },
+    x: xAuthState(),
     youtube: { configured: true, hasApiKey: youtubeConfigured() },
   });
 });
@@ -164,6 +167,11 @@ app.post("/api/chat", async (req, res) => {
     const frames = Array.isArray(req.body?.frames)
       ? req.body.frames.filter((f) => typeof f === "string" && f.startsWith("data:image"))
       : [];
+    const temporalContext = Boolean(req.body?.temporalContext) && frames.length > 1;
+    const visualSubjectHint = String(req.body?.subjectHint || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 96);
     const precomputed = Array.isArray(req.body?.detections)
       ? req.body.detections
       : null;
@@ -228,6 +236,12 @@ app.post("/api/chat", async (req, res) => {
       hasFrames
         ? "The user asked something about the video/screen. Frame(s) and playback timing are attached — commit to your best read of the frame and answer decisively. Never lead with what you can't see or can't tell. If a detail genuinely isn't in frame, coach the best expert move anyway and tuck any caveat into a few trailing words — it is never the headline."
         : "No video frame is attached for this turn. Answer decisively from general knowledge and the video title/description. Don't claim to see the screen, but don't dwell on that either — just answer.",
+      temporalContext
+        ? "The attached frames are chronological samples from at most the previous ten seconds; the final image is the speech-onset view. Use earlier images only for temporal continuity, and ground any current location or placement claim in the final image."
+        : "",
+      visualSubjectHint
+        ? `Recent grounded subject for this follow-up: ${visualSubjectHint}. Use it only to resolve a pronoun when the attached current frame remains consistent; it never authorizes stale location or geometry claims.`
+        : "",
       motionGuide && (motionGuide.note || motionGuide.label)
         ? `The UI is already showing an authored animated outline for this action (${motionGuide.note}; ${motionGuide.label}). Explicitly tell the user to follow the animated outline, then coach the physical move shown. Scene: ${motionGuide.scene || "current visible action"}.`
         : "",
@@ -271,7 +285,9 @@ app.post("/api/chat", async (req, res) => {
               ? usedLocalBoxes
                 ? `Viewer question: ${message}\nReply in spoken prose using the detector results.`
                 : `Viewer question: ${message}\nReturn JSON with reply + labels for the attached frame(s).`
-              : `Viewer question: ${message}\nAttached: ${frames.length} frame(s) from the current playback position.`,
+              : temporalContext
+                ? `Viewer question: ${message}\nAttached: ${frames.length} chronological frame(s); the last is the speech-onset view.`
+                : `Viewer question: ${message}\nAttached: ${frames.length} frame(s) from the current playback position.`,
           },
           ...frames.slice(-3).map((url) => ({
             type: "image_url",
@@ -479,6 +495,10 @@ app.post("/api/guide", async (req, res) => {
     const message = String(req.body?.message || "").trim();
     const frame = String(req.body?.frame || "");
     const videoTitle = String(req.body?.videoTitle || "").trim();
+    const subjectHint = String(req.body?.subjectHint || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 96);
     if (!message) {
       return res.status(400).json({ error: "message is required" });
     }
@@ -501,6 +521,9 @@ app.post("/api/guide", async (req, res) => {
       "If showing the motion from this frame could be unsafe or correctness depends on hidden state, return unsafe_to_show with motion null.",
       "For every non-ready status, labels may contain at most one visible attention box and motion must be null.",
       "Keep note and motion.label imperative, specific, and under 7 words.",
+      subjectHint
+        ? `Recent grounded subject for pronouns: ${subjectHint}. Treat this only as a referent hint; the current frame must still visibly confirm the object and geometry.`
+        : "",
       videoTitle ? `Video title: ${videoTitle}.` : "",
     ]
       .filter(Boolean)
@@ -915,6 +938,182 @@ app.post("/api/verify", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Verification failed" });
+  }
+});
+
+// Proactive work-watcher check: burst of frames around a just-finished action
+// in, silent-by-default verdict out. No cache and no in-flight dedupe — every
+// action is a different set of frames, and a replayed verdict is a stale
+// verdict (same rationale as /api/flip).
+app.post("/api/watch", async (req, res) => {
+  try {
+    const frames = Array.isArray(req.body?.frames)
+      ? req.body.frames.filter(
+          (f) => typeof f === "string" && f.startsWith("data:image"),
+        )
+      : [];
+    const videoTitle = String(req.body?.videoTitle || "").trim();
+    const currentTime = Number(req.body?.currentTime);
+    const concern = String(req.body?.concern || "").trim();
+    const watchFor = Array.isArray(req.body?.watchFor)
+      ? req.body.watchFor.map((w) => String(w)).filter(Boolean).slice(0, 6)
+      : [];
+    const region =
+      req.body?.region && typeof req.body.region === "object"
+        ? req.body.region
+        : null;
+    const task =
+      req.body?.taskContext && typeof req.body.taskContext === "object"
+        ? req.body.taskContext
+        : null;
+
+    if (!frames.length) {
+      return res.status(400).json({ error: "at least one frame is required" });
+    }
+
+    const model = "grok-4.5";
+    const t0 = performance.now();
+
+    const system = [
+      "You are a silent over-the-shoulder quality and safety watcher observing a worker through first-person video frames.",
+      "The frames are in chronological order, oldest first: before an action, during it, and after the worker finished and paused.",
+      "Your default output is silence. The large majority of checks must return verdict ok with spoken null — the worker is usually doing fine, and unnecessary talking is a failure.",
+      'Output ONLY valid JSON with no markdown matching: {"verdict":"ok|mistake|unclear","spoken":"one or two short sentences"|null,"attention":{"text":"short label","kind":"zone","x":0,"y":0,"w":0,"h":0}|null,"confidence":0.0}',
+      'Use "mistake" ONLY when the final frames clearly show a consequential error that has already happened and is visible in the pixels: a wrong part or orientation, unsafe handling, a step done out of order, something forced, dropped, or left unsecured.',
+      "Never infer problems the frames cannot establish: torque, static discharge, whether a wrist strap is worn outside the frame, temperature, tightness, seating depth, or anything hidden. If correctness depends on such things, verdict is unclear and spoken is null.",
+      "Nitpicks, style preferences, and things the worker appears to be about to address are not mistakes. If the action still looks in progress in the last frame, verdict is unclear.",
+      'spoken is required for "mistake" and must be null otherwise. It goes straight to text-to-speech: plain prose, no markdown or formatting characters, at most two short sentences. Lead with what is wrong, then the one concrete fix. Confident and calm, no apologies, no coordinates, no claims about anything outside these frames.',
+      "In spoken, phrase the problem as a present-state observation of the scene. Never use any of these words: highlight, circle, outline, label, mark, point, show, find, where, how, which, open, next, previous, close, stop, play, pause, watch, skip, manual, grok.",
+      'attention is allowed only for "mistake": one normalized 0-1 zone tightly around the visible problem, kind always "zone"; otherwise null.',
+      'confidence is your 0-1 belief in the verdict. Below 0.75 you must not answer "mistake".',
+    ].join(" ");
+
+    const context = [
+      videoTitle ? `Video title: ${videoTitle}.` : "",
+      Number.isFinite(currentTime)
+        ? `Playhead: ${formatTime(currentTime)}.`
+        : "",
+      concern ? `You are specifically watching for: ${concern}.` : "",
+      watchFor.length
+        ? `Known failure modes to check:\n${watchFor.map((w) => `- ${w}`).join("\n")}`
+        : "",
+      region &&
+      [region.x, region.y, region.w, region.h].every((v) => Number.isFinite(v))
+        ? `Prioritize the region around x:${region.x}, y:${region.y}, w:${region.w}, h:${region.h}.`
+        : "",
+      task?.goal
+        ? `Earlier the worker asked: "${String(task.goal).slice(0, 200)}" and was told: "${String(task.instruction || "").slice(0, 300)}". Also judge whether that guidance was followed.`
+        : "",
+      `${frames.length} frame(s) follow in chronological order. The last frame shows the scene after the worker paused. Return the watch JSON.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const makeBody = (frameSubset) =>
+      JSON.stringify({
+        model,
+        temperature: 0.1,
+        reasoning_effort: "low",
+        messages: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: context },
+              ...frameSubset.map((url) => ({
+                type: "image_url",
+                image_url: { url, detail: "low" },
+              })),
+            ],
+          },
+        ],
+      });
+
+    // Hedge against the bimodal upstream latency lottery. The two bodies must
+    // differ (identical payloads hit xAI's prompt cache and correlate): one
+    // gets the full burst, one gets only the settled frame.
+    const bodies =
+      frames.length > 1
+        ? [makeBody(frames), makeBody([frames[frames.length - 1]])]
+        : [makeBody(frames)];
+    const controllers = bodies.map(() => new AbortController());
+    const attempt = (i) =>
+      fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: bodies[i],
+        signal: controllers[i].signal,
+      }).then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error?.message || "Watch request failed");
+        }
+        return data;
+      });
+
+    let data;
+    try {
+      data = await Promise.any(controllers.map((_, i) => attempt(i)));
+    } catch (err) {
+      console.error("Watch error:", err.errors?.[0] || err);
+      return res.status(502).json({
+        error: err.errors?.[0]?.message || "Watch request failed",
+      });
+    } finally {
+      for (const c of controllers) c.abort();
+    }
+
+    try {
+      const raw = data?.choices?.[0]?.message?.content?.trim() || "";
+      const parsed = parseManualJson(raw);
+      let verdict = String(parsed.verdict || "");
+      if (!["ok", "mistake", "unclear"].includes(verdict)) {
+        throw new Error("Invalid watch contract");
+      }
+      const confidence = Number.isFinite(Number(parsed.confidence))
+        ? Math.min(1, Math.max(0, Number(parsed.confidence)))
+        : 0;
+      if (verdict === "mistake" && confidence < 0.75) {
+        console.log(`[watch] downgraded low-confidence mistake (${confidence})`);
+        verdict = "unclear";
+      }
+
+      let spoken = null;
+      let attention = null;
+      if (verdict === "mistake") {
+        spoken = stripSpokenMarkdown(parsed.spoken || "").slice(0, 220);
+        if (!spoken) throw new Error("Invalid watch contract");
+        if (parsed.attention && typeof parsed.attention === "object") {
+          const a = parsed.attention;
+          const nums = [a.x, a.y, a.w, a.h].map(Number);
+          if (nums.every((v) => Number.isFinite(v)) && nums[2] * nums[3] <= 0.5) {
+            attention = {
+              text: String(a.text || "").slice(0, 40),
+              kind: "zone",
+              x: Math.min(1, Math.max(0, nums[0])),
+              y: Math.min(1, Math.max(0, nums[1])),
+              w: Math.min(1, Math.max(0, nums[2])),
+              h: Math.min(1, Math.max(0, nums[3])),
+            };
+          }
+        }
+      }
+
+      console.log(
+        `[watch] verdict=${verdict} conf=${confidence} frames=${frames.length} ${Math.round(performance.now() - t0)}ms`,
+      );
+      return res.json({ verdict, spoken, attention, confidence, model });
+    } catch (err) {
+      // A malformed reply is silence, never a fabricated judgment.
+      console.error("Watch response parse error:", err);
+      return res.status(502).json({ error: "unwatchable_response" });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Watch check failed" });
   }
 });
 

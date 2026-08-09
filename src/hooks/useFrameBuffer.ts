@@ -5,6 +5,8 @@ export type BufferedFrame = {
   url: string;
   /** performance.now() at capture. */
   t: number;
+  /** HTMLMediaElement.currentTime at capture, in seconds. */
+  mediaTime: number;
   /** Mean absolute luma difference from the previous sample, 0–255. */
   motion: number;
 };
@@ -19,6 +21,15 @@ type Options = {
   maxW?: number;
   quality?: number;
 };
+
+/**
+ * Low-cost history for normal video guidance. Flip review deliberately keeps
+ * the hook's faster 12 fps / 5 second defaults instead.
+ */
+export const LIGHTWEIGHT_FRAME_BUFFER_OPTIONS = {
+  fps: 1,
+  seconds: 10,
+} as const;
 
 /** Downscale used for motion scoring only — tiny on purpose. */
 const MOTION_W = 48;
@@ -61,14 +72,51 @@ export function useFrameBuffer({
 
     const maxFrames = Math.max(8, Math.round(fps * seconds));
     const interval = 1000 / fps;
+    const duplicateTimeEpsilon = 0.001;
+    const rewindTolerance = Math.max(0.05, 0.5 / fps);
     let raf = 0;
     let timer = 0;
     let last = 0;
+    let lastMediaTime: number | null = null;
     let stopped = false;
 
     const capture = () => {
       const el = videoRef.current;
-      if (!el || !el.videoWidth || !el.videoHeight) return;
+      if (
+        !el ||
+        !el.videoWidth ||
+        !el.videoHeight ||
+        el.paused ||
+        el.ended ||
+        el.seeking
+      ) {
+        return;
+      }
+
+      const capturedAt = performance.now();
+      const rawMediaTime = el.currentTime;
+      // currentTime is normally finite for both files and MediaStreams. Keep
+      // live camera buffering functional in browsers that expose Infinity/NaN.
+      const mediaTime = Number.isFinite(rawMediaTime)
+        ? rawMediaTime
+        : capturedAt / 1000;
+
+      if (
+        lastMediaTime != null &&
+        mediaTime < lastMediaTime - rewindTolerance
+      ) {
+        // A loop or backward seek starts a new timeline; old frames are no
+        // longer valid context for the current view.
+        clear();
+        lastMediaTime = null;
+      }
+      if (
+        lastMediaTime != null &&
+        Math.abs(mediaTime - lastMediaTime) <= duplicateTimeEpsilon
+      ) {
+        return;
+      }
+      lastMediaTime = mediaTime;
 
       if (!captureRef.current) captureRef.current = document.createElement("canvas");
       if (!motionRef.current) {
@@ -105,11 +153,27 @@ export function useFrameBuffer({
         prevLumaRef.current = luma;
       }
 
-      framesRef.current.push({
+      const next: BufferedFrame = {
         url: canvas.toDataURL("image/jpeg", quality),
-        t: performance.now(),
+        t: capturedAt,
+        mediaTime,
         motion,
-      });
+      };
+      const previous = framesRef.current.at(-1);
+      if (previous?.url === next.url) {
+        // Keep the newest timestamp for a still scene without retaining or
+        // later sending multiple copies of the same JPEG.
+        framesRef.current[framesRef.current.length - 1] = next;
+      } else {
+        framesRef.current.push(next);
+      }
+
+      // Count bounds protect live streams; media-time pruning keeps the
+      // requested duration honest after throttling or a forward seek.
+      const cutoff = mediaTime - seconds;
+      framesRef.current = framesRef.current.filter(
+        (frame) => frame.mediaTime >= cutoff && frame.mediaTime <= mediaTime,
+      );
       if (framesRef.current.length > maxFrames) {
         framesRef.current.splice(0, framesRef.current.length - maxFrames);
       }

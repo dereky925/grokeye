@@ -43,6 +43,8 @@ export type TaskSession = {
   beforeFrame: string;
   stage: TaskStage;
   verdict?: TaskVerdict;
+  /** Session-ledger entry backing this task, so verdicts land in the audit trail. */
+  ledgerEntryId?: string;
 };
 
 export type ManualStep = {

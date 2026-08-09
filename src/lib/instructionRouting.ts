@@ -21,6 +21,8 @@ type RouteInput = {
   toolsOpen?: boolean;
   videoId: string;
   currentTime: number;
+  /** Recent grounded referent for a purely deictic utterance; never geometry. */
+  subjectHint?: string | null;
 };
 
 /**
@@ -38,6 +40,7 @@ export function resolveInstructionRoute({
   toolsOpen = false,
   videoId,
   currentTime,
+  subjectHint = null,
 }: RouteInput): InstructionRoute {
   const candidates = Array.from(
     new Set(
@@ -49,7 +52,12 @@ export function resolveInstructionRoute({
   const motionUtterance = candidates.find(wantsMotionGuidance);
 
   if (motionUtterance) {
-    const cue = findCatalogChoreography(videoId, currentTime, motionUtterance);
+    const cue = findCatalogChoreography(
+      videoId,
+      currentTime,
+      motionUtterance,
+      subjectHint,
+    );
     if (cue) return { kind: "catalog_motion", utterance: motionUtterance, cue };
   }
 

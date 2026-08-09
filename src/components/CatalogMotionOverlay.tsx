@@ -6,9 +6,31 @@ type Props = {
   height: number;
 };
 
-const LOOP_SECONDS = 1.35;
+/**
+ * Loop beats: lock onto the object (hold), glide to the destination (eased),
+ * lock onto the destination (hold), then fade out and restart. The return leg
+ * happens entirely inside the faded-out tail so the outline never visibly
+ * sloshes backwards.
+ */
+const LOOP_SECONDS = 3.2;
 const MOTION_START_SECONDS = 0.18;
-const MOTION_KEY_TIMES = "0;0.03;0.42;0.78;1";
+const MOTION_KEY_TIMES = "0;0.26;0.55;0.96;1";
+const MOTION_KEY_SPLINES = "0 0 1 1;0.4 0 0.2 1;0 0 1 1;0 0 1 1";
+const FADE_KEY_TIMES = "0;0.26;0.55;0.9;0.96;1";
+const FADE_VALUES = "1;1;1;1;0;0";
+
+function fadeAnimate() {
+  return (
+    <animate
+      attributeName="opacity"
+      begin={`${MOTION_START_SECONDS}s`}
+      dur={`${LOOP_SECONDS}s`}
+      repeatCount="indefinite"
+      values={FADE_VALUES}
+      keyTimes={FADE_KEY_TIMES}
+    />
+  );
+}
 
 function destinationTransform(cue: CatalogMotionCue): string | undefined {
   if (cue.delta) return `translate(${cue.delta[0]} ${cue.delta[1]})`;
@@ -28,35 +50,24 @@ export default function CatalogMotionOverlay({ cue, width, height }: Props) {
   const animatedObject = (
     <>
       <path
-        className="catalog-motion-object-aura"
-        d={cue.outline}
-        pathLength="1"
-      >
-        {cue.mode === "morph" && cue.destination && (
-          <animate
-            attributeName="d"
-            begin={`${MOTION_START_SECONDS}s`}
-            dur={`${LOOP_SECONDS}s`}
-            repeatCount="indefinite"
-            values={`${cue.outline};${cue.outline};${cue.destination};${cue.destination};${cue.outline}`}
-            keyTimes={MOTION_KEY_TIMES}
-          />
-        )}
-      </path>
-      <path
         className="catalog-motion-object"
         d={cue.outline}
         pathLength="1"
       >
         {cue.mode === "morph" && cue.destination && (
-          <animate
-            attributeName="d"
-            begin={`${MOTION_START_SECONDS}s`}
-            dur={`${LOOP_SECONDS}s`}
-            repeatCount="indefinite"
-            values={`${cue.outline};${cue.outline};${cue.destination};${cue.destination};${cue.outline}`}
-            keyTimes={MOTION_KEY_TIMES}
-          />
+          <>
+            <animate
+              attributeName="d"
+              begin={`${MOTION_START_SECONDS}s`}
+              dur={`${LOOP_SECONDS}s`}
+              repeatCount="indefinite"
+              calcMode="spline"
+              keySplines={MOTION_KEY_SPLINES}
+              values={`${cue.outline};${cue.outline};${cue.destination};${cue.destination};${cue.outline}`}
+              keyTimes={MOTION_KEY_TIMES}
+            />
+            {fadeAnimate()}
+          </>
         )}
       </path>
       {cue.detailPaths?.map((path, index) => (
@@ -123,6 +134,8 @@ export default function CatalogMotionOverlay({ cue, width, height }: Props) {
                 begin={`${MOTION_START_SECONDS}s`}
                 dur={`${LOOP_SECONDS}s`}
                 repeatCount="indefinite"
+                calcMode="spline"
+                keySplines={MOTION_KEY_SPLINES}
                 values={`0 0;0 0;${cue.delta[0]} ${cue.delta[1]};${cue.delta[0]} ${cue.delta[1]};0 0`}
                 keyTimes={MOTION_KEY_TIMES}
               />
@@ -134,10 +147,13 @@ export default function CatalogMotionOverlay({ cue, width, height }: Props) {
                 begin={`${MOTION_START_SECONDS}s`}
                 dur={`${LOOP_SECONDS}s`}
                 repeatCount="indefinite"
+                calcMode="spline"
+                keySplines={MOTION_KEY_SPLINES}
                 values={`0 ${cue.rotation.cx} ${cue.rotation.cy};0 ${cue.rotation.cx} ${cue.rotation.cy};${cue.rotation.degrees} ${cue.rotation.cx} ${cue.rotation.cy};${cue.rotation.degrees} ${cue.rotation.cx} ${cue.rotation.cy};0 ${cue.rotation.cx} ${cue.rotation.cy}`}
                 keyTimes={MOTION_KEY_TIMES}
               />
             )}
+            {fadeAnimate()}
             {animatedObject}
           </g>
         )}
@@ -149,21 +165,6 @@ export default function CatalogMotionOverlay({ cue, width, height }: Props) {
           markerEnd={`url(#${arrowId})`}
           style={{ stroke: `url(#${gradientId})`, filter: `url(#${glowId})` }}
         />
-
-        {[0, 1, 2].map((index) => (
-          <circle
-            key={index}
-            className={`catalog-motion-spark spark-${index + 1}`}
-            r={index === 0 ? 5 : 3.5}
-          >
-            <animateMotion
-              begin={`${0.2 + index * 0.12}s`}
-              dur=".56s"
-              repeatCount="indefinite"
-              path={cue.motionPath}
-            />
-          </circle>
-        ))}
 
       </svg>
 
