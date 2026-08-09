@@ -4,7 +4,9 @@ import { createServer } from "vite";
 
 let vite;
 let parsePostAction;
+let parseDirectXAsk;
 let computeCollageLayout;
+let directAskCaption;
 let fallbackCaption;
 let formatMediaTime;
 let isCardActionable;
@@ -17,7 +19,9 @@ before(async () => {
   });
   ({
     parsePostAction,
+    parseDirectXAsk,
     computeCollageLayout,
+    directAskCaption,
     fallbackCaption,
     formatMediaTime,
     isCardActionable,
@@ -99,6 +103,47 @@ test("collage layout is a labeled horizontal strip", () => {
   // Out-of-range counts clamp to the supported band.
   assert.equal(computeCollageLayout(1).cells.length, 2);
   assert.equal(computeCollageLayout(7).cells.length, 3);
+});
+
+test("direct X-ask grammar fires without a pending card, but stays narrow", () => {
+  for (const message of [
+    "I am not too sure, post on X asking real people for verification",
+    "post on x",
+    "Post it on X.",
+    "post this to twitter",
+    "share it on X",
+    "ask on X",
+    "ask X if this is right",
+    "ask real people to verify this",
+    "ask some people to check this",
+  ]) {
+    assert.equal(parseDirectXAsk(message), true, message);
+  }
+  for (const message of [
+    "post it", // approval grammar's job — needs a pending card
+    "ask people", // no verification flavor, no X named
+    "where does this post go", // fence post, not a social post
+    "show me elon's x feed",
+    "am I doing this right?",
+    "",
+  ]) {
+    assert.equal(parseDirectXAsk(message), false, message);
+  }
+});
+
+test("direct-ask caption asks for human eyes without claiming a failed verdict", () => {
+  const caption = directAskCaption({
+    question: "Where to put this leg",
+    videoTitle: "IKEA Furniture",
+    mediaTime: 6,
+  });
+  assert.ok(caption.includes("IKEA Furniture"), caption);
+  assert.ok(caption.includes("0:06"), caption);
+  assert.ok(caption.includes("Where to put this leg?"), caption);
+  assert.ok(caption.includes("human eye"), caption);
+  assert.ok(!caption.includes("couldn't verify"), caption);
+  assert.ok(caption.endsWith("#Grokathon"), caption);
+  assert.ok(caption.length <= 280);
 });
 
 test("fallback caption is honest, short, and link-free", () => {

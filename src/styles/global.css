@@ -1215,6 +1215,18 @@ video {
   border-color: rgba(157, 255, 176, 0.35);
 }
 
+/* The connection conduit descends into the target from above — hang the
+   target's chip + leader under the box so the arrowhead/ripple land clear. */
+.video-highlight.is-target .video-highlight-leader {
+  bottom: auto;
+  top: 100%;
+}
+
+.video-highlight.is-target .video-highlight-label {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
 /* Pointer arrow that pops in at a found object — sits outside the top-right
    corner aiming into the box; .flip mirrors it to the bottom-left when the
    box is near the top/right edge. */
@@ -1285,7 +1297,13 @@ video {
   }
 }
 
-/* Connection arrow between two tracked callouts. */
+/* Connection conduit between two tracked callouts — the "where does this
+   go?" money shot. A lifted curved rail draws itself source → target, a
+   white→mint gradient core with streaming energy packets rides the live
+   tracked path, and the destination gets an impact ripple. Monochrome +
+   mint only; every layer keeps following the tracker because the path `d`
+   is re-derived from current box endpoints each render while the CSS/SMIL
+   clocks keep running (pathLength=1 keeps dash math geometry-proof). */
 .video-highlight-arrows {
   position: absolute;
   inset: 0;
@@ -1293,27 +1311,152 @@ video {
   pointer-events: none;
 }
 
-.video-highlight-arrow {
-  stroke: rgba(245, 248, 255, 0.92);
+/* Dark underlay keeps the rail legible over bright footage. */
+.hl-conn-under {
+  fill: none;
+  stroke: rgba(5, 10, 7, 0.5);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: hl-conn-draw 0.7s cubic-bezier(0.3, 0.75, 0.2, 1) forwards;
+}
+
+.hl-conn-glow {
+  fill: none;
+  stroke: rgba(157, 255, 176, 0.45);
+  stroke-width: 10;
+  stroke-linecap: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation:
+    hl-conn-draw 0.7s cubic-bezier(0.3, 0.75, 0.2, 1) forwards,
+    hl-conn-breathe 2.6s ease-in-out 0.9s infinite;
+}
+
+.hl-conn-core {
+  fill: none;
   stroke-width: 3;
   stroke-linecap: round;
-  stroke-dasharray: 10 7;
-  animation: arrow-flow 0.8s linear infinite;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: hl-conn-draw 0.7s cubic-bezier(0.3, 0.75, 0.2, 1) 0.06s forwards;
+  filter: drop-shadow(0 0 5px rgba(157, 255, 176, 0.55));
 }
 
-.video-highlight-arrow-glow {
-  stroke: rgba(255, 255, 255, 0.18);
-  stroke-width: 9;
+/* Faint white shimmer pulses under the comets (dasharray in pathLength
+   units: 0.045 + 0.205 = 0.25 → four pulses, seamless -0.25 cycle). */
+.hl-conn-flow {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1.5;
   stroke-linecap: round;
+  stroke-dasharray: 0.045 0.205;
+  opacity: 0;
+  animation:
+    hl-conn-appear 0.45s ease-out 0.72s forwards,
+    hl-conn-flow 1.15s linear infinite;
 }
 
-.video-highlight-arrowhead {
-  fill: rgba(245, 248, 255, 0.95);
+/* Arrowhead pops from its tip once the rail finishes drawing. */
+.hl-conn-head {
+  fill: #c9ffd6;
+  stroke: rgba(5, 10, 7, 0.4);
+  stroke-width: 1;
+  filter: drop-shadow(0 0 7px rgba(157, 255, 176, 0.85));
+  transform-box: fill-box;
+  transform-origin: 100% 50%;
+  transform: scale(0);
+  animation: hl-conn-head-pop 0.4s cubic-bezier(0.2, 1.35, 0.3, 1) 0.58s forwards;
 }
 
-@keyframes arrow-flow {
+/* Destination impact: soft light pool + expanding rings. */
+.hl-conn-pool {
+  opacity: 0;
+  animation: hl-conn-pool 2.4s ease-in-out 0.75s infinite;
+}
+
+.hl-conn-ripple {
+  fill: none;
+  stroke: rgba(157, 255, 176, 0.85);
+  stroke-width: 1.6;
+  opacity: 0;
+  animation: hl-conn-ripple 1.8s cubic-bezier(0.2, 0.55, 0.3, 1) 0.8s infinite;
+}
+
+.hl-conn-ripple.r2 {
+  stroke: rgba(245, 248, 255, 0.6);
+  animation-delay: 1.7s;
+}
+
+.hl-conn-comets {
+  opacity: 0;
+  animation: hl-conn-appear 0.5s ease-out 0.8s forwards;
+}
+
+.hl-conn-comet-head {
+  filter: drop-shadow(0 0 4px rgba(157, 255, 176, 0.9));
+}
+
+@keyframes hl-conn-draw {
   to {
-    stroke-dashoffset: -17;
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes hl-conn-flow {
+  to {
+    stroke-dashoffset: -0.25;
+  }
+}
+
+@keyframes hl-conn-appear {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes hl-conn-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes hl-conn-head-pop {
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes hl-conn-pool {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+
+@keyframes hl-conn-ripple {
+  0% {
+    r: 3px;
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.9;
+  }
+  55% {
+    r: 19px;
+    opacity: 0;
+  }
+  100% {
+    r: 19px;
+    opacity: 0;
   }
 }
 
@@ -1590,6 +1733,476 @@ video {
   50% {
     opacity: 0.45;
     transform: scale(0.72);
+  }
+}
+
+/* ——— Hero treatment for the gpu-seat-card cue only (the 1:31 "where do I
+   put it?" money shot). Staging: the outline traces itself around the card,
+   the slot target fades in, then a glass ghost card — edges, bracket, and
+   PCB details riding inside it — glides up, overshoots 10%, and settles
+   with a white latch-click flash on the slot; a sheen sweeps the seated
+   card. Every layer shares the 3.2s / 0.5s-delay clock so the beats stay
+   locked. Other cues keep the plain-polygon look on purpose. ——— */
+.catalog-motion[data-cue="gpu-seat-card"] .catalog-motion-object,
+.catalog-motion[data-cue="gpu-seat-card-late"] .catalog-motion-object,
+.catalog-motion[data-cue="gpu-seat-card"] .catalog-motion-under--object,
+.catalog-motion[data-cue="gpu-seat-card-late"] .catalog-motion-under--object {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: catalog-hero-trace 0.6s cubic-bezier(0.3, 0.7, 0.2, 1) both;
+}
+
+.catalog-motion[data-cue="gpu-seat-card"] .catalog-motion-object,
+.catalog-motion[data-cue="gpu-seat-card-late"] .catalog-motion-object {
+  stroke: #f2fff5;
+  filter: drop-shadow(0 0 5px rgba(157, 255, 176, 0.45));
+}
+
+.catalog-motion[data-cue="gpu-seat-card"] .catalog-motion-target,
+.catalog-motion[data-cue="gpu-seat-card-late"] .catalog-motion-target,
+.catalog-motion[data-cue="gpu-seat-card"]
+  .catalog-motion-under:not(.catalog-motion-under--object),
+.catalog-motion[data-cue="gpu-seat-card-late"]
+  .catalog-motion-under:not(.catalog-motion-under--object) {
+  animation: catalog-hero-target-in 0.4s ease-out 0.45s both;
+}
+
+.catalog-motion[data-cue="gpu-seat-card"] .catalog-motion-ghost,
+.catalog-motion[data-cue="gpu-seat-card-late"] .catalog-motion-ghost {
+  animation: catalog-hero-glide 3.2s 0.5s cubic-bezier(0.2, 0, 0.2, 1) infinite
+    backwards;
+}
+
+.catalog-motion[data-cue="gpu-seat-card"] .catalog-motion-ghost-shape,
+.catalog-motion[data-cue="gpu-seat-card-late"] .catalog-motion-ghost-shape {
+  fill: url(#catalog-hero-glass);
+  stroke: #c9ffd6;
+  stroke-width: 2.5;
+}
+
+.catalog-hero-ghost-glow {
+  fill: none;
+  stroke: rgba(157, 255, 176, 0.5);
+  stroke-width: 8;
+  filter: blur(3.5px);
+}
+
+.catalog-hero-detail {
+  fill: none;
+  stroke: rgba(234, 255, 240, 0.5);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.catalog-hero-sheen {
+  transform-box: fill-box;
+  animation: catalog-hero-sheen 3.2s 0.5s linear infinite backwards;
+}
+
+.catalog-hero-latch {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 4;
+  stroke-linejoin: round;
+  opacity: 0;
+  filter: drop-shadow(0 0 10px rgba(157, 255, 176, 0.9));
+  animation: catalog-hero-latch 3.2s 0.5s linear infinite;
+}
+
+@keyframes catalog-hero-trace {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes catalog-hero-target-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Beats: fade in on the card, hold, press up past the slot, settle back
+   (the click), hold seated, fade. Return leg invisible. */
+@keyframes catalog-hero-glide {
+  0% {
+    transform: none;
+    opacity: 0;
+    animation-timing-function: ease-out;
+  }
+  7% {
+    transform: none;
+    opacity: 1;
+  }
+  20% {
+    transform: none;
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.6, 0, 0.25, 1);
+  }
+  52% {
+    transform: var(--ghost-past, var(--ghost-to));
+    opacity: 1;
+    animation-timing-function: ease-out;
+  }
+  57% {
+    transform: var(--ghost-to);
+    opacity: 1;
+  }
+  84% {
+    transform: var(--ghost-to);
+    opacity: 1;
+    animation-timing-function: ease-in;
+  }
+  95% {
+    transform: var(--ghost-to);
+    opacity: 0;
+  }
+  100% {
+    transform: var(--ghost-to);
+    opacity: 0;
+  }
+}
+
+@keyframes catalog-hero-latch {
+  0%,
+  50% {
+    opacity: 0;
+    stroke-width: 2;
+  }
+  54% {
+    opacity: 1;
+    stroke-width: 5;
+  }
+  66%,
+  100% {
+    opacity: 0;
+    stroke-width: 2.5;
+  }
+}
+
+@keyframes catalog-hero-sheen {
+  0%,
+  58% {
+    transform: translateX(0) skewX(-14deg);
+    opacity: 0;
+  }
+  62% {
+    opacity: 1;
+  }
+  76% {
+    opacity: 1;
+  }
+  80%,
+  100% {
+    transform: translateX(var(--sheen-sweep, 900px)) skewX(-14deg);
+    opacity: 0;
+  }
+}
+
+/* ——— Arc hero: the ~0:05 IKEA "where does this leg go?" money shot.
+   Staging: a soft vignette focuses the frame, the leg outline traces
+   itself, the free-end target and its landing pad fade in, a curved
+   conduit rail (same language as the tracked connection arrows) draws
+   toward the free end with comets streaming along it, and a glass ghost
+   of the leg lifts, arcs over, and seats onto the desktop edge — latch
+   flash, light pool, and impact rings all fire on the shared
+   3.6s / 0.6s-delay clock at the seat beat. ——— */
+.catalog-motion[data-cue="ikea-place-leg-frame"] .catalog-motion-object,
+.catalog-motion[data-cue="ikea-place-leg-frame"]
+  .catalog-motion-under--object {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: catalog-hero-trace 0.6s cubic-bezier(0.3, 0.7, 0.2, 1) both;
+}
+
+.catalog-motion[data-cue="ikea-place-leg-frame"] .catalog-motion-object {
+  stroke: #f2fff5;
+  filter: drop-shadow(0 0 5px rgba(157, 255, 176, 0.45));
+}
+
+.catalog-motion[data-cue="ikea-place-leg-frame"] .catalog-motion-target,
+.catalog-motion[data-cue="ikea-place-leg-frame"]
+  .catalog-motion-under:not(.catalog-motion-under--object) {
+  animation: catalog-hero-target-in 0.4s ease-out 0.45s both;
+}
+
+.catalog-motion[data-cue="ikea-place-leg-frame"] .catalog-motion-ghost {
+  /* Per-keyframe timing functions drive each leg of the arc. */
+  animation: catalog-arc-glide 3.6s 0.6s linear infinite backwards;
+}
+
+.catalog-motion[data-cue="ikea-place-leg-frame"] .catalog-motion-ghost-shape {
+  fill: url(#catalog-hero-glass);
+  stroke: #c9ffd6;
+  stroke-width: 2.5;
+}
+
+.catalog-arc-vignette {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    120% 120% at 43% 60%,
+    transparent 42%,
+    rgba(0, 0, 0, 0.36) 100%
+  );
+  opacity: 0;
+  animation: catalog-arc-appear 0.5s ease-out 0.15s forwards;
+}
+
+/* Rail stack — dark underlay for legibility, mint glow, gradient core,
+   white shimmer, all drawing themselves after the outline trace. */
+.catalog-arc-under {
+  fill: none;
+  stroke: rgba(5, 10, 7, 0.5);
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: catalog-arc-draw 0.7s cubic-bezier(0.3, 0.75, 0.2, 1) 0.55s both;
+}
+
+.catalog-arc-glow {
+  fill: none;
+  stroke: rgba(157, 255, 176, 0.45);
+  stroke-width: 10;
+  stroke-linecap: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation:
+    catalog-arc-draw 0.7s cubic-bezier(0.3, 0.75, 0.2, 1) 0.55s both,
+    catalog-arc-breathe 2.6s ease-in-out 1.5s infinite;
+}
+
+.catalog-arc-core {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: catalog-arc-draw 0.7s cubic-bezier(0.3, 0.75, 0.2, 1) 0.62s both;
+  filter: drop-shadow(0 0 5px rgba(157, 255, 176, 0.55));
+}
+
+/* Dasharray in pathLength units: 0.045 + 0.205 = 0.25 → four pulses,
+   seamless -0.25 cycle. */
+.catalog-arc-flow {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-dasharray: 0.045 0.205;
+  opacity: 0;
+  animation:
+    catalog-arc-appear 0.45s ease-out 1.3s forwards,
+    catalog-arc-flowmove 1.15s linear infinite;
+}
+
+.catalog-arc-head {
+  fill: #c9ffd6;
+  stroke: rgba(5, 10, 7, 0.4);
+  stroke-width: 1;
+  filter: drop-shadow(0 0 7px rgba(157, 255, 176, 0.85));
+  transform-box: fill-box;
+  transform-origin: 100% 50%;
+  transform: scale(0);
+  animation: catalog-arc-head-pop 0.4s cubic-bezier(0.2, 1.35, 0.3, 1) 1.2s
+    forwards;
+}
+
+.catalog-arc-comets {
+  opacity: 0;
+  animation: catalog-arc-appear 0.5s ease-out 1.35s forwards;
+}
+
+.catalog-arc-comet-head {
+  filter: drop-shadow(0 0 4px rgba(157, 255, 176, 0.9));
+}
+
+/* Landing pad: low-alpha mint wash over the free end that brightens to
+   "call" the leg in just before it seats. */
+.catalog-arc-pad {
+  fill: rgba(157, 255, 176, 0.12);
+  stroke: none;
+  animation: catalog-arc-pad 3.6s 0.6s ease-in-out infinite backwards;
+}
+
+.catalog-arc-latch {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 4;
+  stroke-linejoin: round;
+  opacity: 0;
+  filter: drop-shadow(0 0 10px rgba(157, 255, 176, 0.9));
+  animation: catalog-arc-latch 3.6s 0.6s linear infinite;
+}
+
+.catalog-arc-pool {
+  opacity: 0;
+  animation: catalog-arc-pool 3.6s 0.6s ease-in-out infinite;
+}
+
+.catalog-arc-ring {
+  fill: none;
+  stroke: rgba(157, 255, 176, 0.85);
+  stroke-width: 1.6;
+  opacity: 0;
+  animation: catalog-arc-ring 3.6s 0.6s cubic-bezier(0.2, 0.55, 0.3, 1)
+    infinite;
+}
+
+.catalog-arc-ring.r2 {
+  stroke: rgba(245, 248, 255, 0.6);
+  animation-delay: 0.78s;
+}
+
+@keyframes catalog-arc-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes catalog-arc-appear {
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes catalog-arc-flowmove {
+  to {
+    stroke-dashoffset: -0.25;
+  }
+}
+
+@keyframes catalog-arc-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes catalog-arc-head-pop {
+  to {
+    transform: scale(1);
+  }
+}
+
+/* Beats: fade in on the leg, hold, lift up and arc over (slight pivot),
+   press a touch past the seam, settle seated, hold, fade. Return leg
+   invisible. Every keyframe keeps the same transform function list so the
+   browser interpolates translate/scale/rotate independently. */
+@keyframes catalog-arc-glide {
+  0% {
+    transform: var(--arc-rest);
+    opacity: 0;
+    animation-timing-function: ease-out;
+  }
+  7% {
+    transform: var(--arc-rest);
+    opacity: 1;
+  }
+  20% {
+    transform: var(--arc-rest);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.4, 1);
+  }
+  38% {
+    transform: var(--arc-lift);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.3, 0, 0.25, 1);
+  }
+  54% {
+    transform: var(--arc-past);
+    opacity: 1;
+    animation-timing-function: ease-out;
+  }
+  59% {
+    transform: var(--arc-seat);
+    opacity: 1;
+  }
+  84% {
+    transform: var(--arc-seat);
+    opacity: 1;
+    animation-timing-function: ease-in;
+  }
+  94% {
+    transform: var(--arc-seat);
+    opacity: 0;
+  }
+  100% {
+    transform: var(--arc-seat);
+    opacity: 0;
+  }
+}
+
+@keyframes catalog-arc-pad {
+  0%,
+  18% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 0.75;
+  }
+  52% {
+    opacity: 1;
+  }
+  62%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes catalog-arc-latch {
+  0%,
+  52% {
+    opacity: 0;
+    stroke-width: 2;
+  }
+  56% {
+    opacity: 1;
+    stroke-width: 5;
+  }
+  68%,
+  100% {
+    opacity: 0;
+    stroke-width: 2.5;
+  }
+}
+
+@keyframes catalog-arc-pool {
+  0%,
+  50% {
+    opacity: 0;
+  }
+  58% {
+    opacity: 0.75;
+  }
+  74%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes catalog-arc-ring {
+  0%,
+  54% {
+    r: 4px;
+    opacity: 0;
+  }
+  57% {
+    opacity: 0.9;
+  }
+  72% {
+    r: 26px;
+    opacity: 0;
+  }
+  100% {
+    r: 26px;
+    opacity: 0;
   }
 }
 
@@ -3467,19 +4080,21 @@ video {
 
 .lp-main {
   flex: 1;
-  width: min(1160px, calc(100% - 3rem));
+  width: min(1520px, calc(100% - 5rem));
   margin: 0 auto;
 }
 
 /* ---------- hero ---------- */
 
+/* fills the first viewport exactly — the next section must never peek above the fold */
 .lp-hero {
   display: grid;
   grid-template-columns: 1.02fr 0.98fr;
-  gap: 3.5rem;
+  gap: 4.5rem;
   align-items: center;
-  padding: 4.5rem 0 4rem;
-  min-height: calc(88vh - 70px);
+  padding: 1.5rem 0 3rem;
+  min-height: calc(100vh - 64px);
+  min-height: calc(100svh - 64px);
 }
 
 .lp-kicker {
@@ -3499,25 +4114,26 @@ video {
   margin: 0;
   font-family: var(--font-display);
   font-weight: 400;
-  font-size: clamp(2.4rem, 4.4vw, 3.6rem);
+  font-size: clamp(2.6rem, 4vw, 4.1rem);
   letter-spacing: -0.045em;
   line-height: 1.04;
 }
 
 .lp-thesis {
-  margin: 1.4rem 0 0;
-  font-size: 1.22rem;
+  margin: 1.5rem 0 0;
+  font-size: 1.32rem;
   line-height: 1.45;
   font-weight: 500;
   color: var(--text);
-  max-width: 32rem;
+  max-width: 36rem;
 }
 
 .lp-sub {
   margin: 1rem 0 0;
   color: var(--muted);
+  font-size: 1.04rem;
   line-height: 1.6;
-  max-width: 34rem;
+  max-width: 38rem;
 }
 
 .lp-cta-row {
@@ -3737,20 +4353,20 @@ video {
 /* ---------- sections ---------- */
 
 .lp-section {
-  padding: 4.5rem 0;
+  padding: 5.5rem 0;
   border-top: 1px solid var(--border);
 }
 
 .lp-section-head {
-  max-width: 44rem;
-  margin-bottom: 2.6rem;
+  max-width: 48rem;
+  margin-bottom: 2.8rem;
 }
 
 .lp-section-head h2 {
   margin: 0;
   font-family: var(--font-display);
   font-weight: 400;
-  font-size: clamp(1.6rem, 2.6vw, 2.2rem);
+  font-size: clamp(1.8rem, 2.6vw, 2.6rem);
   letter-spacing: -0.035em;
   line-height: 1.12;
 }
@@ -4064,9 +4680,9 @@ video {
 
 .org-page {
   flex: 1;
-  width: min(1160px, calc(100% - 3rem));
+  width: min(1520px, calc(100% - 5rem));
   margin: 0 auto;
-  padding: 2.6rem 0 3rem;
+  padding: 3.2rem 0 3rem;
   display: flex;
   flex-direction: column;
   gap: 1.4rem;
@@ -4081,7 +4697,7 @@ video {
   margin: 0;
   font-family: var(--font-display);
   font-weight: 400;
-  font-size: clamp(1.9rem, 3.4vw, 2.6rem);
+  font-size: clamp(2.2rem, 3.2vw, 3.2rem);
   letter-spacing: -0.04em;
 }
 
@@ -4121,7 +4737,7 @@ video {
 .org-kpi-value {
   font-family: var(--font-display);
   font-weight: 500;
-  font-size: 2.15rem;
+  font-size: 2.5rem;
   letter-spacing: -0.03em;
   line-height: 1;
 }

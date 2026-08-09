@@ -43,6 +43,7 @@ import { tightenLabelsOnFrame } from "../lib/tighten";
 import { detectColorTargets } from "../lib/colorDetect";
 import {
   applyManualAction,
+  defaultManualX,
   fetchManual,
   identifyTopicFromFrame,
   snapPosition,
@@ -117,11 +118,13 @@ import {
 } from "../lib/audit";
 import {
   composeCollage,
+  directAskCaption,
   fallbackCaption,
   fetchXCaption,
   fetchXPost,
   formatMediaTime,
   isCardActionable,
+  parseDirectXAsk,
   parsePostAction,
   type XPostCardState,
 } from "../lib/xpost";
@@ -762,6 +765,79 @@ export default function VideoPlayer({ video, onBack }: Props) {
   );
 
   /**
+   * User-initiated "ask X": same card + collage pipeline as the audit
+   * escalation, but the spoken command was the approval, so it posts on its
+   * own the moment the collage is ready. A failed post leaves the card in
+   * "failed" where the normal "post it" grammar and button still work.
+   */
+  const directXPost = useCallback(
+    async (payload: {
+      question: string;
+      instruction: string;
+      videoTitle: string;
+      mediaTime: number;
+      frames: string[];
+    }) => {
+      const clientToken = crypto.randomUUID();
+      setXQueue((queue) => [
+        ...queue,
+        {
+          clientToken,
+          question: payload.question,
+          caption: directAskCaption(payload),
+          collageUrl: null,
+          status: "composing",
+          mediaTime: payload.mediaTime,
+          origin: "user",
+        },
+      ]);
+      const captionPromise = fetchXCaption({
+        question: payload.question,
+        instructionText: payload.instruction,
+        videoTitle: payload.videoTitle,
+        mediaTime: payload.mediaTime,
+      }).catch(() => null);
+      let collageUrl: string;
+      try {
+        collageUrl = await composeCollage(payload.frames);
+      } catch {
+        patchXCard(clientToken, {
+          status: "failed",
+          error: "Couldn't build the frame collage.",
+        });
+        return;
+      }
+      // Don't hold the post hostage to a slow caption model — the
+      // deterministic caption is honest and already on the card.
+      const caption =
+        (await Promise.race([
+          captionPromise,
+          new Promise<null>((resolve) =>
+            window.setTimeout(() => resolve(null), 4000),
+          ),
+        ])) || directAskCaption(payload);
+      patchXCard(clientToken, { collageUrl, caption, status: "posting" });
+      try {
+        const { url } = await fetchXPost({
+          imageDataUrl: collageUrl,
+          text: caption,
+          clientToken,
+        });
+        patchXCard(clientToken, { status: "posted", postedUrl: url });
+        window.setTimeout(() => dismissXCard(clientToken), 12000);
+      } catch (err) {
+        const failure = err as Error & { code?: string };
+        patchXCard(clientToken, {
+          status: "failed",
+          error: failure.message,
+          errorCode: failure.code,
+        });
+      }
+    },
+    [dismissXCard, patchXCard],
+  );
+
+  /**
    * Post the head card. Voice approvals pass their turn's sessionId so the
    * outcome is spoken; button taps pass null (the visual state is feedback
    * enough). The artifact survives every failure — the card keeps collage and
@@ -1221,6 +1297,64 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
+        // "I'm not sure — post on X asking real people" needs no pending
+        // card: the command itself is the approval, so the card composes and
+        // posts on its own while the acknowledgment speaks.
+        if (parseDirectXAsk(heard)) {
+          stampTurn("widget", { answer: "Posted to X for human verification" });
+          resumeIfAutoPaused();
+          const buffered = readContextFrames();
+          const frames = (() => {
+            if (buffered.length >= 3) {
+              return [
+                buffered[0],
+                buffered[Math.floor(buffered.length / 2)],
+                buffered[buffered.length - 1],
+              ].map((item) => item.url);
+            }
+            const live = el ? captureFrame(el, { maxW: 512, quality: 0.5 }) : null;
+            const urls = [
+              ...buffered.map((item) => item.url),
+              speechFrameRef.current,
+              live,
+            ].filter((url): url is string => Boolean(url));
+            return [...new Set(urls)].slice(0, 3);
+          })();
+          // A lone frame still posts — X sees the same moment twice rather
+          // than the ask silently dying.
+          if (frames.length === 1) frames.push(frames[0]);
+          if (frames.length < 2) {
+            await playSpoken(
+              "I don't have a frame to post yet — give me a second of footage.",
+              sessionId,
+            );
+            return;
+          }
+          // The moment under doubt is the last real question, not the "post
+          // it" command itself; navigation turns (page flips, panel moves,
+          // manual steps) don't count.
+          const doubted = [...ledgerRef.current.entries]
+            .reverse()
+            .find(
+              (entry) =>
+                entry.kind !== "widget" &&
+                entry.kind !== "manual_step" &&
+                entry.question,
+            );
+          void directXPost({
+            question: doubted?.question ?? "Does this look right?",
+            instruction: doubted?.answer || lastSpokenRef.current || "",
+            videoTitle: video.title,
+            mediaTime: doubted?.mediaTime ?? turnTime,
+            frames,
+          });
+          await playSpoken(
+            "Posting it to X — real people are on it.",
+            sessionId,
+          );
+          return;
+        }
+
         const youtubeAction = parseYoutubeAction(heard, youtubeOpenRef.current);
         if (youtubeAction) stampTurn("widget", { answer: "YouTube control" });
         if (youtubeAction?.type === "open_youtube") {
@@ -1576,14 +1710,15 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
           if (action.type === "open_manual") {
             const requestedTopic = action.topic || video.manualTopic;
-            // The video's bundled pamphlet is only the default when the user
-            // didn't name a different subject — "show me a sushi guide" on the
-            // IKEA video must not open the MICKE pamphlet.
+            // A video that ships a pamphlet ALWAYS opens it — no topic
+            // parsing, no web search. On the IKEA clip, "the manual" is the
+            // MICKE pamphlet, full stop; a speech-recognition hiccup in the
+            // topic must never send the demo to a web search.
             const topicWantsPamphlet =
+              Boolean(video.manualPdf) ||
+              video.id === "ikea" ||
               !requestedTopic ||
-              /\b(ikea|micke)\b/i.test(requestedTopic) ||
-              (/\bdesk\b/i.test(requestedTopic) &&
-                /\b(manual|assembl|instruction)/i.test(requestedTopic));
+              /\b(ikea|micke)\b/i.test(requestedTopic);
             const ikeaPdf = topicWantsPamphlet
               ? video.manualPdf ||
                 (video.id === "ikea" ? "/manuals/micke-desk.pdf" : undefined)
@@ -1617,7 +1752,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
                 ],
               },
               stepIndex: 0,
-              x: manualRef.current?.x ?? 24,
+              x: manualRef.current?.x ?? defaultManualX(Boolean(ikeaPdf)),
               y: manualRef.current?.y ?? 96,
               loading: true,
             };
@@ -1682,7 +1817,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
                   result.state.doc.steps[result.state.stepIndex]?.text,
               });
             }
-            if (result.speak) {
+            // The pamphlet IS the feedback — opening it stays completely
+            // silent (no spoken line, no reply bubble). Web-found step guides
+            // still announce themselves because their panel takes a moment to
+            // fill in.
+            if (result.speak && result.state?.doc.mode !== "pdf") {
               try {
                 await playSpoken(result.speak, sessionId);
               } catch {
@@ -2021,8 +2160,14 @@ export default function VideoPlayer({ video, onBack }: Props) {
               }
               highlightHoldRef.current = true;
             }
-            setManual(null);
-            manualRef.current = null;
+            // Text manuals clear the stage for the animation, but the
+            // right-docked PDF pamphlet stays up — the rehearsed IKEA flow is
+            // "pull up the manual" → "where to put" → "check page 10", and
+            // closing it here would strand the page-navigation grammar.
+            if (manualRef.current?.doc.mode !== "pdf") {
+              setManual(null);
+              manualRef.current = null;
+            }
             setTools(null);
             toolsRef.current = null;
             setScanning(false);
@@ -2265,8 +2410,21 @@ export default function VideoPlayer({ video, onBack }: Props) {
         setMicArmed(false);
         setPhase("speaking");
 
-        const audioUrl = await result.audioPromise;
-        await playAudioUrl(audioUrl, sessionId);
+        // Voice is best-effort once the reply text exists: a failed TTS (or
+        // blocked playback) degrades to the on-screen bubble for roughly the
+        // time it takes to read, instead of tearing the whole beat down with
+        // an error card mid-demo.
+        try {
+          const audioUrl = await result.audioPromise;
+          await playAudioUrl(audioUrl, sessionId);
+        } catch (ttsErr) {
+          console.warn("[tts] voice degraded to text-only turn", ttsErr);
+          if (sessionId === sessionRef.current) {
+            await new Promise((r) =>
+              setTimeout(r, Math.min(4500, 1400 + result.reply.length * 40)),
+            );
+          }
+        }
 
         // Keep a grounded follow-up referent alive for ten seconds after the
         // spoken answer finishes, not merely from the start of model latency.

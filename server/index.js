@@ -1134,18 +1134,33 @@ app.post("/api/tts", async (req, res) => {
       return res.status(400).json({ error: "text is required" });
     }
 
-    const response = await fetch("https://api.x.ai/v1/tts", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text,
-        voice_id: "carina",
-        language: "en",
-      }),
-    });
+    const speak = () =>
+      fetch("https://api.x.ai/v1/tts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text,
+          voice_id: "carina",
+          language: "en",
+        }),
+      });
+
+    // One retry on transient upstream failures — a dropped voice line
+    // mid-demo is worse than ~300ms of extra latency.
+    let response = await speak().catch(() => null);
+    if (!response || !response.ok) {
+      if (response) {
+        console.error(
+          `TTS upstream ${response.status} — retrying once:`,
+          await response.text().catch(() => ""),
+        );
+      }
+      await new Promise((r) => setTimeout(r, 250));
+      response = await speak();
+    }
 
     if (!response.ok) {
       const errText = await response.text();
