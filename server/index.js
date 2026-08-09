@@ -9,6 +9,7 @@ import { mountSpotifyRoutes, spotifyConfigured } from "./spotify.js";
 import { mountTwitterRoutes, twitterConfigured } from "./twitter.js";
 import { mountYoutubeRoutes, youtubeConfigured } from "./youtube.js";
 import { mountXRoutes, xAuthState } from "./x.js";
+import { collectLabelArms, fuseLabelResults } from "./labels.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -361,6 +362,10 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
+// After the first valid hedge result, wait this long for a second one so
+// agreeing boxes can be averaged. Bounded: worst case adds 450ms to a turn.
+const LABEL_FUSE_GRACE_MS = 450;
+
 // Labels-only sidecar for highlight turns. Runs in parallel with /api/chat so
 // boxes paint while the spoken reply is still generating (~1.4s vs ~2s+ combined).
 app.post("/api/labels", async (req, res) => {
@@ -398,31 +403,35 @@ app.post("/api/labels", async (req, res) => {
       .filter(Boolean)
       .join(" ");
 
-    const makeBody = (detail) =>
-      JSON.stringify({
-        model,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: system },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: `Locate: ${message}` },
-              {
-                type: "image_url",
-                image_url: { url: frames[frames.length - 1], detail },
-              },
-            ],
-          },
-        ],
-      });
+    const body = JSON.stringify({
+      model,
+      temperature: 0.2,
+      // Default effort burns 600–1500 hidden reasoning tokens on this task
+      // (15–40 s per call, measured 2026-08-08) without measurably better
+      // boxes; at low effort the model often skips reasoning entirely and
+      // answers in ~2 s.
+      reasoning_effort: "low",
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `Locate: ${message}` },
+            {
+              type: "image_url",
+              image_url: { url: frames[frames.length - 1], detail: "high" },
+            },
+          ],
+        },
+      ],
+    });
 
-    // Upstream vision latency is a per-request lottery (~1.5s fast path,
-    // 5–9s slow path) regardless of image detail, so hedge asymmetrically:
-    // one low-detail and one high-detail call, first result wins — about half
-    // of turns get sharper grounding for free.
-    const bodies = [makeBody("low"), makeBody("high")];
-    const controllers = [new AbortController(), new AbortController()];
+    // Even at low effort upstream latency is a lottery (~2 s when the model
+    // skips reasoning, ~9–17 s when it doesn't), so hedge three identical
+    // high-detail arms. First VALID result wins — a parse-failure arm can no
+    // longer beat a good one — and a short grace window collects a second
+    // result so agreeing boxes can be averaged (see server/labels.js).
+    const controllers = Array.from({ length: 3 }, () => new AbortController());
     const attempt = (i) =>
       fetch("https://api.x.ai/v1/chat/completions", {
         method: "POST",
@@ -430,41 +439,40 @@ app.post("/api/labels", async (req, res) => {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: bodies[i],
+        body,
         signal: controllers[i].signal,
       }).then(async (response) => {
         const data = await response.json();
         if (!response.ok) {
           throw new Error(data?.error?.message || "Labels request failed");
         }
-        return data;
+        const parsed = parseManualJson(
+          data?.choices?.[0]?.message?.content?.trim() || "",
+        );
+        return {
+          labels: Array.isArray(parsed.labels) ? parsed.labels : [],
+          link:
+            parsed.link && typeof parsed.link === "object" ? parsed.link : null,
+          status: typeof parsed.status === "string" ? parsed.status : null,
+        };
       });
 
-    let data;
-    try {
-      data = await Promise.any(controllers.map((_, i) => attempt(i)));
-    } catch (err) {
-      console.error("Labels error:", err.errors?.[0] || err);
-      return res.status(502).json({
-        error: err.errors?.[0]?.message || "Labels request failed",
-      });
-    } finally {
-      for (const c of controllers) c.abort();
+    const results = await collectLabelArms(
+      controllers.map((_, i) => attempt(i)),
+      LABEL_FUSE_GRACE_MS,
+    );
+    for (const c of controllers) c.abort();
+    if (!results.length) {
+      console.error("Labels error: all hedge arms failed");
+      return res.status(502).json({ error: "Labels request failed" });
     }
 
-    const raw = data?.choices?.[0]?.message?.content?.trim() || "";
-    let labels = [];
-    let link = null;
-    let status = null;
-    try {
-      const parsed = parseManualJson(raw);
-      labels = Array.isArray(parsed.labels) ? parsed.labels : [];
-      link =
-        parsed.link && typeof parsed.link === "object" ? parsed.link : null;
-      status = typeof parsed.status === "string" ? parsed.status : null;
-    } catch {
-      labels = [];
-    }
+    const withBoxes = results.filter((r) => r.labels.length > 0);
+    const chosen =
+      withBoxes.length >= 2
+        ? fuseLabelResults(withBoxes[0], withBoxes[1])
+        : (withBoxes[0] ?? results[0]);
+    let { labels, link, status } = chosen;
 
     // Plausibility guard: a "tight" reticle never covers half the frame.
     labels = labels.filter((l) => {
@@ -479,7 +487,9 @@ app.post("/api/labels", async (req, res) => {
       return true;
     });
 
-    console.log(`[labels] upstream ${Math.round(performance.now() - t0)}ms`);
+    console.log(
+      `[labels] upstream ${Math.round(performance.now() - t0)}ms valid=${results.length}${withBoxes.length >= 2 ? " fused" : ""}`,
+    );
     res.json({ labels, link, status, model });
   } catch (err) {
     console.error(err);
