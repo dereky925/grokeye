@@ -558,6 +558,31 @@ export async function fetchLabels(input: {
   };
 }
 
+/**
+ * One re-anchor for the local tracker. `crop` is a JPEG of the neighborhood
+ * the tracker currently believes the object is in; the box comes back in that
+ * crop's coordinates and the caller maps it home.
+ */
+export async function fetchRelocate(
+  crop: string,
+  target: string,
+): Promise<{
+  visible: boolean;
+  box: { x: number; y: number; w: number; h: number } | null;
+}> {
+  const res = await fetch("/api/relocate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ crop, target }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Relocate failed");
+  return {
+    visible: Boolean(data.visible),
+    box: data.visible && data.box ? data.box : null,
+  };
+}
+
 export async function askGrok(input: {
   message: string;
   videoTitle?: string;

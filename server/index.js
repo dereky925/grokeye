@@ -559,6 +559,106 @@ app.post("/api/labels", async (req, res) => {
   }
 });
 
+/**
+ * Re-anchor for the client-side tracker: one box for one already-known object,
+ * on a crop the client took around where it currently thinks the object is.
+ *
+ * Deliberately not /api/labels. That route answers "what should we highlight?"
+ * and can afford to be slow and thorough; this one fires about once a second
+ * for as long as a box is up, so it is stripped to the smallest question that
+ * still corrects drift — no link, no multi-label, no zone. Two hedged arms and
+ * first-valid-wins, because here latency is the whole point.
+ */
+app.post("/api/relocate", async (req, res) => {
+  try {
+    const target = String(req.body?.target || "").trim();
+    const crop = String(req.body?.crop || "");
+    if (!target) return res.status(400).json({ error: "target is required" });
+    if (!crop.startsWith("data:image")) {
+      return res.status(400).json({ error: "crop image is required" });
+    }
+
+    const model = "grok-4.5";
+    const t0 = performance.now();
+    const system = [
+      "You re-locate one known object in a cropped video frame for a tracker.",
+      'Respond with ONLY valid JSON (no markdown): {"visible":true,"x":0,"y":0,"w":0,"h":0}',
+      "Coordinates are normalized 0–1 within THIS crop, origin top-left; x,y = top-left corner, w,h = size.",
+      "The box must be the tightest rectangle around the visible pixels of the object itself — exclude hands, tools, shadows, and background unless they are the object.",
+      "The object is usually near the middle of the crop, but may have moved toward an edge.",
+      'If the object is not in this crop, respond {"visible":false} and nothing else.',
+    ].join(" ");
+
+    const body = JSON.stringify({
+      model,
+      temperature: 0,
+      // Same finding as /api/labels: default effort spends 600–1500 hidden
+      // reasoning tokens without better boxes. On this route a slow answer is
+      // worse than no answer — it lands after the box has already moved on.
+      reasoning_effort: "low",
+      max_tokens: 120,
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `Re-locate: ${target}` },
+            { type: "image_url", image_url: { url: crop, detail: "high" } },
+          ],
+        },
+      ],
+    });
+
+    const controllers = Array.from({ length: 2 }, () => new AbortController());
+    const attempt = (i) =>
+      fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body,
+        signal: controllers[i].signal,
+      }).then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error?.message || "Relocate request failed");
+        }
+        const parsed = parseManualJson(
+          data?.choices?.[0]?.message?.content?.trim() || "",
+        );
+        if (parsed?.visible === false) return { visible: false, box: null };
+        const box = {
+          x: Number(parsed?.x),
+          y: Number(parsed?.y),
+          w: Number(parsed?.w),
+          h: Number(parsed?.h),
+        };
+        if (!Object.values(box).every(Number.isFinite)) {
+          throw new Error("Relocate returned no box");
+        }
+        return { visible: true, box };
+      });
+
+    // First valid arm wins outright — unlike /api/labels there is no grace
+    // window to average a second draw, since waiting costs more accuracy
+    // (through staleness) than averaging would buy.
+    const winner = await Promise.any(controllers.map((_, i) => attempt(i)));
+    for (const c of controllers) c.abort();
+
+    console.log(
+      `[relocate] "${target}" ${Math.round(performance.now() - t0)}ms ${
+        winner.visible ? "hit" : "not_visible"
+      }`,
+    );
+    res.json({ ...winner, model });
+  } catch (err) {
+    // AggregateError = every hedge arm failed.
+    console.error("Relocate error:", err?.message || err);
+    res.status(502).json({ error: "Relocate failed" });
+  }
+});
+
 // Geometry-only sidecar for visible hand/tool motion. Runs beside /api/chat;
 // it never delays the spoken answer and never invents an animation when the
 // requested action or required tool is absent from the frame.

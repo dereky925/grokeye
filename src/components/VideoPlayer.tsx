@@ -289,6 +289,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   const [scanning, setScanning] = useState(false);
   const [holdUntil, setHoldUntil] = useState<number | null>(null);
   const [highlightSeed, setHighlightSeed] = useState<string | null>(null);
+  /** What the live boxes are of, so the tracker can re-anchor them on Grok. */
+  const [highlightTarget, setHighlightTarget] = useState<string | null>(null);
   const [tools, setTools] = useState<ToolsState | null>(null);
   const [ghost, setGhost] = useState<GhostState | null>(null);
   const [detecting, setDetecting] = useState(false);
@@ -528,6 +530,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     setDetecting(false);
     setHoldUntil(null);
     setHighlightSeed(null);
+    setHighlightTarget(null);
     highlightHoldRef.current = false;
     if (!turnInFlightRef.current) resumeIfAutoPaused();
   }, [resumeIfAutoPaused]);
@@ -2364,6 +2367,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
                 }
                 highlightHoldRef.current = shown.length > 0;
                 setHighlightSeed(frames[0] ?? null);
+                // Guidance boxes are tracked like any other, so they drift the
+                // same way. Each re-anchors against its own label text.
+                setHighlightTarget(shown.length ? (locateTarget ?? heard) : null);
                 setHighlights(shown);
                 setGuidanceCue(cue);
               })
@@ -2391,6 +2397,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
           setHighlightLinks([]);
           setHoldUntil(null);
           setHighlightSeed(null);
+          setHighlightTarget(null);
           highlightHoldRef.current = false;
           setDetecting(true);
 
@@ -2401,6 +2408,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
               precomputed = normalizeLabels(colorHits);
               if (precomputed.length) {
                 highlightHoldRef.current = true;
+                setHighlightTarget(locateTarget ?? heard);
                 setHighlights(withLabelIds(precomputed));
                 rememberVisualSubject(
                   pickGroundedSubject(locateTarget, precomputed[0]?.text),
@@ -2432,6 +2440,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
                   // Boxes were located on the speech-onset frame — seed the
                   // tracker from it so they walk forward onto the live video.
                   setHighlightSeed(frames[0] ?? null);
+                  setHighlightTarget(locateTarget ?? heard);
                   setHighlights(withLabelIds(precomputed));
                   rememberVisualSubject(
                     pickGroundedSubject(locateTarget, precomputed[0]?.text),
@@ -2484,6 +2493,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
               const links = normalizeLink(raw.link, placed);
               highlightHoldRef.current = placed.length > 0;
               setHighlightSeed(geomSeed);
+              setHighlightTarget(placed.length ? (locateTarget ?? heard) : null);
               setHighlights(placed);
               setHighlightLinks(links);
               if (placed.length) {
@@ -2992,6 +3002,11 @@ export default function VideoPlayer({ video, onBack }: Props) {
           guidanceStatus={guidanceCue?.status ?? null}
           holdUntil={holdUntil}
           seedFrame={highlightSeed}
+          reanchorTarget={highlightTarget}
+          // Live camera has no end of clip to fade into, and the object is
+          // usually still in frame long after the spoken reply — hold the box
+          // until Grok says it has actually gone.
+          persistent={live}
           onLabelsChange={(next) => {
             if (!next.length) clearHighlights();
             else setHighlights(next);
