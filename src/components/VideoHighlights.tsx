@@ -4,6 +4,8 @@ import {
   getVideoContentRect,
   type VideoContentRect,
 } from "../lib/highlights";
+import { createReanchorLoop } from "../lib/reanchor";
+import { fetchRelocate } from "../hooks/useVoice";
 import type { CatalogMotionCue } from "../lib/choreography";
 import CatalogMotionOverlay from "./CatalogMotionOverlay";
 import GuidanceMotionOverlay from "./GuidanceMotionOverlay";
@@ -42,6 +44,20 @@ type Props = {
   maxMs?: number;
   /** Keep boxes up at least this long even if the voice reply is short. */
   minHoldMs?: number;
+  /**
+   * What the user asked to see (e.g. "the portafilter"). When set, boxes are
+   * re-anchored against Grok about once a second so they stop drifting and can
+   * recover after an occlusion. The tracker still draws every frame — the
+   * correction never sits in the drawing path.
+   */
+  reanchorTarget?: string | null;
+  /** Seconds between re-anchor requests. */
+  reanchorMs?: number;
+  /**
+   * Live camera: hold the boxes until the object actually leaves the frame,
+   * rather than expiring them with the spoken reply.
+   */
+  persistent?: boolean;
 };
 
 /** Point where the center-to-center line exits `box`, plus a small gap. */
@@ -79,6 +95,9 @@ export default function VideoHighlights({
   seedFrame = null,
   maxMs = 12000,
   minHoldMs = 5000,
+  reanchorTarget = null,
+  reanchorMs = 1200,
+  persistent = false,
 }: Props) {
   const [content, setContent] = useState<VideoContentRect | null>(null);
   const [leaving, setLeaving] = useState(false);
@@ -121,9 +140,11 @@ export default function VideoHighlights({
 
     setLeaving(false);
     let tracker: ReturnType<typeof createHighlightTracker> = null;
+    let reanchor: ReturnType<typeof createReanchorLoop> | null = null;
 
     let dead = false;
     let raf = 0;
+    let gone = false;
     const started = performance.now();
 
     const fadeOut = () => {
@@ -136,7 +157,7 @@ export default function VideoHighlights({
     const tick = () => {
       if (dead) return;
       const elapsed = performance.now() - started;
-      if (elapsed > maxMs) {
+      if (!persistent && elapsed > maxMs) {
         fadeOut();
         return;
       }
@@ -144,17 +165,33 @@ export default function VideoHighlights({
       // Voice-synced expiry: fade shortly after the spoken reply finished,
       // but never before the minimum demo beat.
       const hold = holdUntilRef.current;
-      if (hold != null && elapsed >= minHoldMs && performance.now() >= hold) {
+      if (
+        !persistent &&
+        hold != null &&
+        elapsed >= minHoldMs &&
+        performance.now() >= hold
+      ) {
+        fadeOut();
+        return;
+      }
+
+      // Grok has confirmed the object left the frame — the one signal that
+      // retires a persistent box.
+      if (gone) {
         fadeOut();
         return;
       }
 
       const next = tracker ? tracker.update(video) : labelsRef.current;
       // Ignore early track losses — keep the model box up for the demo beat.
-      if (!next && elapsed >= minHoldMs) {
+      // With re-anchoring on, a local loss is recoverable, so only Grok's
+      // not_visible verdict (above) retires the box.
+      if (!next && !reanchor && elapsed >= minHoldMs) {
         fadeOut();
         return;
       }
+
+      if (reanchor) reanchor.tick(performance.now());
 
       const publish = next ?? labelsRef.current;
       const prev = labelsRef.current;
@@ -200,6 +237,18 @@ export default function VideoHighlights({
     const begin = (img: CanvasImageSource | null) => {
       if (dead) return;
       tracker = createHighlightTracker(video, labels, img);
+      if (!tracker || !reanchorTarget) return;
+      if (!labels.some((l) => l.kind === "box")) return;
+      reanchor = createReanchorLoop({
+        video,
+        tracker,
+        target: reanchorTarget,
+        relocate: (crop, target) => fetchRelocate(crop, target),
+        intervalMs: reanchorMs,
+        onLost: () => {
+          gone = true;
+        },
+      });
     };
     if (seedFrame) {
       const img = new Image();
@@ -213,6 +262,7 @@ export default function VideoHighlights({
 
     return () => {
       dead = true;
+      reanchor?.dispose();
       tracker?.dispose();
       const cancel = (
         video as HTMLVideoElement & {
@@ -230,7 +280,15 @@ export default function VideoHighlights({
     };
     // Re-seed tracker only when a new placement arrives (id set changes).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoRef, labels.map((l) => l.id).join("|"), maxMs, minHoldMs]);
+  }, [
+    videoRef,
+    labels.map((l) => l.id).join("|"),
+    maxMs,
+    minHoldMs,
+    reanchorTarget,
+    reanchorMs,
+    persistent,
+  ]);
 
   if ((!labels.length && !catalogMotion) || !content) return null;
 

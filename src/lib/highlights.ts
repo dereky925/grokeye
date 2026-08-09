@@ -1,4 +1,9 @@
-import type { HighlightKind, HighlightLabel, HighlightLink } from "../types";
+import type {
+  HighlightKind,
+  HighlightLabel,
+  HighlightLink,
+  NormBox,
+} from "../types";
 
 export type VideoContentRect = {
   /** Content box relative to the video element. */
@@ -721,7 +726,24 @@ function blendTemplate(dst: Float32Array, src: Float32Array, a: number) {
 }
 
 export type HighlightTracker = {
+  /** Throttled step against the live element. Paused video holds its boxes. */
   update: (video: HTMLVideoElement) => HighlightLabel[] | null;
+  /**
+   * One unthrottled step against an arbitrary frame. Used to replay buffered
+   * frames so a re-anchor computed on an older frame arrives current.
+   */
+  advance: (source: CanvasImageSource) => HighlightLabel[] | null;
+  /**
+   * Move targets onto `next` and re-seed their templates from `source`, so a
+   * corrected box keeps its lock instead of sliding back to the drifted one.
+   */
+  reanchor: (source: CanvasImageSource, next: Record<string, NormBox>) => void;
+  /**
+   * Current boxes without stepping the tracker. `includeLost` also returns
+   * targets that have exceeded MAX_MISSES, so a re-anchor can resurrect one
+   * the local search has given up on.
+   */
+  boxes: (includeLost?: boolean) => HighlightLabel[];
   dispose: () => void;
 };
 
@@ -773,6 +795,119 @@ export function createHighlightTracker(
   let prevGray: Float32Array | null = gray0;
   let lastTs = 0;
 
+  const publish = (includeLost = false) =>
+    targets
+      .filter((t) => includeLost || t.misses < MAX_MISSES)
+      .map((t) => ({ id: t.id, text: t.text, kind: t.kind, ...t.box }));
+
+  /** One tracking step against any frame. No throttle, no paused handling. */
+  const step = (source: CanvasImageSource): HighlightLabel[] | null => {
+    ctx.drawImage(source, 0, 0, gw, gh);
+    const frame = ctx.getImageData(0, 0, gw, gh);
+    const gray = luma(frame.data, gw, gh);
+    const edges = sobelMag(gray, gw, gh);
+
+    const alive: HighlightLabel[] = [];
+    for (const t of targets) {
+      // 1) Optical-flow seed (capped) — predict motion between frames.
+      if (prevGray) {
+        const flow = estimateBoxFlow(prevGray, gray, gw, gh, t.box);
+        if (flow) {
+          const maxPx = Math.max(4, Math.min(t.box.w, t.box.h) * gw * 0.32);
+          const dx = Math.max(-maxPx, Math.min(maxPx, flow.dx));
+          const dy = Math.max(-maxPx, Math.min(maxPx, flow.dy));
+          t.box = {
+            ...t.box,
+            x: clamp01(t.box.x + dx / gw),
+            y: clamp01(t.box.y + dy / gh),
+          };
+          if (t.box.x + t.box.w > 1) t.box.x = Math.max(0, 1 - t.box.w);
+          if (t.box.y + t.box.h > 1) t.box.y = Math.max(0, 1 - t.box.h);
+        }
+      }
+
+      // 2) Weak salmon color assist (soft blend, local only).
+      if (t.colorLock && t.misses >= 2) {
+        const c = colorCentroidNudge(frame.data, gw, gh, t.box);
+        if (c) {
+          const cx = t.box.x + t.box.w / 2;
+          const cy = t.box.y + t.box.h / 2;
+          const nx = cx * 0.88 + c.x * 0.12;
+          const ny = cy * 0.88 + c.y * 0.12;
+          t.box = {
+            ...t.box,
+            x: clamp01(nx - t.box.w / 2),
+            y: clamp01(ny - t.box.h / 2),
+          };
+          if (t.box.x + t.box.w > 1) t.box.x = Math.max(0, 1 - t.box.w);
+          if (t.box.y + t.box.h > 1) t.box.y = Math.max(0, 1 - t.box.h);
+        }
+      }
+
+      const pad = t.misses > 8 || t.score < 0.38 ? SEARCH_PAD_LOST : SEARCH_PAD;
+      const hit = fusedSearch(gray, edges, frame.data, gw, gh, t, pad);
+      if (!hit) {
+        t.misses += 1;
+        if (t.misses < MAX_MISSES) {
+          alive.push({ id: t.id, text: t.text, kind: t.kind, ...t.box });
+        }
+        continue;
+      }
+
+      t.misses = Math.max(0, t.misses - 3);
+      t.score = hit.score;
+      // Balanced follow — responsive but not jumpy.
+      t.box = {
+        x: t.box.x * 0.4 + hit.x * 0.6,
+        y: t.box.y * 0.4 + hit.y * 0.6,
+        w: t.box.w * 0.85 + hit.w * 0.15,
+        h: t.box.h * 0.85 + hit.h * 0.15,
+      };
+
+      if (hit.score > 0.4) {
+        const gPatch = extractFieldPatch(
+          gray,
+          gw,
+          gh,
+          t.box.x,
+          t.box.y,
+          t.box.w,
+          t.box.h,
+          TEMPL,
+          TEMPL,
+        );
+        const ePatch = extractFieldPatch(
+          edges,
+          gw,
+          gh,
+          t.box.x,
+          t.box.y,
+          t.box.w,
+          t.box.h,
+          TEMPL,
+          TEMPL,
+        );
+        const hPatch = extractHist(
+          frame.data,
+          gw,
+          gh,
+          t.box.x,
+          t.box.y,
+          t.box.w,
+          t.box.h,
+        );
+        blendTemplate(t.grayT, gPatch, 0.12);
+        blendTemplate(t.edgeT, ePatch, 0.1);
+        blendTemplate(t.hist, hPatch, 0.08);
+      }
+
+      alive.push({ id: t.id, text: t.text, kind: t.kind, ...t.box });
+    }
+
+    prevGray = gray;
+    return alive.length ? alive : null;
+  };
+
   return {
     update(el) {
       if (!el.videoWidth) return labels;
@@ -792,119 +927,71 @@ export function createHighlightTracker(
       // Faster ticks when locked; slow down slightly when hunting.
       const fps = worstMisses > 8 || avgScore < 0.4 ? 16 : 24;
       const now = performance.now();
-      if (now - lastTs < 1000 / fps) {
-        return targets
-          .filter((t) => t.misses < MAX_MISSES)
-          .map((t) => ({ id: t.id, text: t.text, kind: t.kind, ...t.box }));
-      }
+      if (now - lastTs < 1000 / fps) return publish();
       lastTs = now;
 
-      ctx.drawImage(el, 0, 0, gw, gh);
+      return step(el);
+    },
+    advance(source) {
+      return step(source);
+    },
+    reanchor(source, next) {
+      ctx.drawImage(source, 0, 0, gw, gh);
       const frame = ctx.getImageData(0, 0, gw, gh);
       const gray = luma(frame.data, gw, gh);
       const edges = sobelMag(gray, gw, gh);
 
-      const alive: HighlightLabel[] = [];
       for (const t of targets) {
-        // 1) Optical-flow seed (capped) — predict motion between frames.
-        if (prevGray) {
-          const flow = estimateBoxFlow(prevGray, gray, gw, gh, t.box);
-          if (flow) {
-            const maxPx = Math.max(4, Math.min(t.box.w, t.box.h) * gw * 0.32);
-            const dx = Math.max(-maxPx, Math.min(maxPx, flow.dx));
-            const dy = Math.max(-maxPx, Math.min(maxPx, flow.dy));
-            t.box = {
-              ...t.box,
-              x: clamp01(t.box.x + dx / gw),
-              y: clamp01(t.box.y + dy / gh),
-            };
-            if (t.box.x + t.box.w > 1) t.box.x = Math.max(0, 1 - t.box.w);
-            if (t.box.y + t.box.h > 1) t.box.y = Math.max(0, 1 - t.box.h);
-          }
-        }
-
-        // 2) Weak salmon color assist (soft blend, local only).
-        if (t.colorLock && t.misses >= 2) {
-          const c = colorCentroidNudge(frame.data, gw, gh, t.box);
-          if (c) {
-            const cx = t.box.x + t.box.w / 2;
-            const cy = t.box.y + t.box.h / 2;
-            const nx = cx * 0.88 + c.x * 0.12;
-            const ny = cy * 0.88 + c.y * 0.12;
-            t.box = {
-              ...t.box,
-              x: clamp01(nx - t.box.w / 2),
-              y: clamp01(ny - t.box.h / 2),
-            };
-            if (t.box.x + t.box.w > 1) t.box.x = Math.max(0, 1 - t.box.w);
-            if (t.box.y + t.box.h > 1) t.box.y = Math.max(0, 1 - t.box.h);
-          }
-        }
-
-        const pad =
-          t.misses > 8 || t.score < 0.38 ? SEARCH_PAD_LOST : SEARCH_PAD;
-        const hit = fusedSearch(gray, edges, frame.data, gw, gh, t, pad);
-        if (!hit) {
-          t.misses += 1;
-          if (t.misses < MAX_MISSES) {
-            alive.push({ id: t.id, text: t.text, kind: t.kind, ...t.box });
-          }
-          continue;
-        }
-
-        t.misses = Math.max(0, t.misses - 3);
-        t.score = hit.score;
-        // Balanced follow — responsive but not jumpy.
+        const nb = next[t.id];
+        if (!nb) continue;
+        const w = Math.min(1, Math.max(0.02, nb.w));
+        const h = Math.min(1, Math.max(0.02, nb.h));
         t.box = {
-          x: t.box.x * 0.4 + hit.x * 0.6,
-          y: t.box.y * 0.4 + hit.y * 0.6,
-          w: t.box.w * 0.85 + hit.w * 0.15,
-          h: t.box.h * 0.85 + hit.h * 0.15,
+          w,
+          h,
+          x: Math.min(1 - w, Math.max(0, nb.x)),
+          y: Math.min(1 - h, Math.max(0, nb.y)),
         };
-
-        if (hit.score > 0.4) {
-          const gPatch = extractFieldPatch(
-            gray,
-            gw,
-            gh,
-            t.box.x,
-            t.box.y,
-            t.box.w,
-            t.box.h,
-            TEMPL,
-            TEMPL,
-          );
-          const ePatch = extractFieldPatch(
-            edges,
-            gw,
-            gh,
-            t.box.x,
-            t.box.y,
-            t.box.w,
-            t.box.h,
-            TEMPL,
-            TEMPL,
-          );
-          const hPatch = extractHist(
-            frame.data,
-            gw,
-            gh,
-            t.box.x,
-            t.box.y,
-            t.box.w,
-            t.box.h,
-          );
-          blendTemplate(t.grayT, gPatch, 0.12);
-          blendTemplate(t.edgeT, ePatch, 0.1);
-          blendTemplate(t.hist, hPatch, 0.08);
-        }
-
-        alive.push({ id: t.id, text: t.text, kind: t.kind, ...t.box });
+        // Replace rather than blend: the drifted template is exactly what we
+        // are correcting away from.
+        t.grayT = extractFieldPatch(
+          gray,
+          gw,
+          gh,
+          t.box.x,
+          t.box.y,
+          t.box.w,
+          t.box.h,
+          TEMPL,
+          TEMPL,
+        );
+        t.edgeT = extractFieldPatch(
+          edges,
+          gw,
+          gh,
+          t.box.x,
+          t.box.y,
+          t.box.w,
+          t.box.h,
+          TEMPL,
+          TEMPL,
+        );
+        t.hist = extractHist(
+          frame.data,
+          gw,
+          gh,
+          t.box.x,
+          t.box.y,
+          t.box.w,
+          t.box.h,
+        );
+        t.misses = 0;
+        // A fresh anchor is trustworthy — next tick uses the tight search pad.
+        t.score = 1;
       }
-
       prevGray = gray;
-      return alive.length ? alive : null;
     },
+    boxes: publish,
     dispose() {
       canvas.width = 0;
       canvas.height = 0;
