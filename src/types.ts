@@ -232,3 +232,25 @@ export type FlipReviewState = {
   x: number;
   y: number;
 };
+
+/** Verdict for one step of a task, judged from a strip of its own frames. */
+export type StepReview = {
+  verdict: "correct" | "minor_issues" | "incorrect" | "not_visible";
+  summary: string;
+  expected: string;
+  issues: Array<{ what: string; fix: string }>;
+  /** 3-5 sentences for the on-screen panel. Never spoken. */
+  description: string;
+  step: { n: number; start: number; end: number; text: string };
+};
+
+export type StepReviewState = {
+  review: StepReview | null;
+  /** The frames the verdict was drawn from, oldest first. */
+  strip: string[];
+  loading: boolean;
+  stepNumber: number;
+  stepText: string;
+  x: number;
+  y: number;
+};

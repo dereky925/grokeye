@@ -1,0 +1,103 @@
+{
+  "videoId": "pov-copper-plumbing",
+  "title": "Bend, solder, and route copper pipe",
+  "task": "bending, soldering, and routing copper plumbing",
+  "setting": "POV of a gloved plumber working from an outdoor concrete yard with a lever pipe bender and coiled red hose, then indoors among open tool cases and a gas torch, at a chased blue-plaster wall with copper stubs, across an opened floor cavity with joists and flux, and finally up in a loft among yellow insulation, rafters, and a second worker.",
+  "steps": [
+    {
+      "n": 1,
+      "start": 0,
+      "end": 16,
+      "text": "Seat the copper tube in the lever bender and pull the bend",
+      "detail": "Gloved hands clamp a straight copper length in the circular former and haul the long black handle around until a finished bend lies on the concrete.",
+      "flags": [],
+      "expected": "Action is acceptable as an early preparatory step provided the tube was first measured/marked and the correct former is used; bending un-marked tube risks incorrect geometry."
+    },
+    {
+      "n": 2,
+      "start": 16,
+      "end": 44,
+      "text": "Open the tool bags and pick torch, cutters, and flux brush",
+      "detail": "Inside beside wooden cabinets the worker rummages a white bag and a dirty hard case, lifts a torch on a yellow gas cylinder, grabs red pipe-slice wheels, and holds up a small flux brush.",
+      "flags": [],
+      "expected": "Action is correct; gathering torch, cutters and flux brush is required before any joint preparation."
+    },
+    {
+      "n": 3,
+      "start": 44,
+      "end": 56,
+      "text": "Dry-fit elbows and stubs at the wall chase",
+      "detail": "At the blue plaster chase a vertical copper stub is pointed out, an elbow is offered onto a low run, and the upright pipe is left seated in the wall opening.",
+      "flags": [],
+      "expected": "Dry-fitting stubs and elbows is correct only after cleaning and fluxing; dry-fit must also establish final level and alignment before any heat is applied."
+    },
+    {
+      "n": 4,
+      "start": 56,
+      "end": 84,
+      "text": "Heat each joint and feed solder into the fitting",
+      "detail": "The lit torch flame is played on wall and floor-level copper joints while the other hand brings solder wire to the hot cups until the metal wets.",
+      "flags": [],
+      "expected": "Cleaning and fluxing must be completed BEFORE heating or feeding solder; soldering un-prepared joints is improper. Final leveling must already be locked in; soldering first is out of order."
+    },
+    {
+      "n": 5,
+      "start": 84,
+      "end": 104,
+      "text": "Span the two wall stubs with a spirit level and true them",
+      "detail": "A yellow spirit level is laid across the pair of protruding copper ends and adjusted until the vials read level.",
+      "flags": [],
+      "expected": "Leveling and truing must occur during dry-fit BEFORE soldering; doing so after solder has set is out of order and requires reheating to correct."
+    },
+    {
+      "n": 6,
+      "start": 104,
+      "end": 120,
+      "text": "Assemble and solder the tee run in the floor cavity",
+      "detail": "Among open joists and rubble the torch reheats copper tees and elbows in the floor chase while short cut lengths are pushed into the fittings beside a flux pot.",
+      "flags": [],
+      "expected": "Every tee, elbow and tube end in the cavity must be deburred, cleaned and fluxed before assembly; heating and soldering without those steps is incorrect."
+    },
+    {
+      "n": 7,
+      "start": 120,
+      "end": 144,
+      "text": "Carry copper up and lay out elbows in the loft",
+      "detail": "In the dark loft over yellow insulation the worker and a colleague pass long copper lengths across the joists and set loose elbows beside the run.",
+      "flags": [],
+      "expected": "Staging long tube and loose elbows in the loft is acceptable once lower-level joints are complete and cooled; joint-preparation standards remain mandatory."
+    },
+    {
+      "n": 8,
+      "start": 144,
+      "end": 160,
+      "text": "Cut and feed the long copper length through the loft run",
+      "detail": "A cutter is worked on a loft pipe, then both workers push and guide a long straight copper tube forward under the rafters.",
+      "flags": [],
+      "expected": "Cutting and feeding tube is correct provided the fresh cut is immediately deburred and cleaned before the end enters any fitting."
+    }
+  ],
+  "afterClip": "Seat the remaining loft elbows, solder the overhead joints, and tie the new run back into the leveled wall stubs.",
+  "source": {
+    "title": "POV Copper Plumbing",
+    "url": "/videos/pov-copper-plumbing.mp4",
+    "siteName": "GrokEye catalog"
+  },
+  "durationSeconds": 160,
+  "generated": true,
+  "frameCount": 40,
+  "procedure": [
+    "Plan route, measure runs and mark bend/cut positions on copper tube",
+    "Cut tube square to length with a rotary pipe cutter",
+    "Deburr every cut end inside and out",
+    "Clean pipe ends and fitting sockets to bright metal with abrasive or brush",
+    "Apply flux evenly to all joint surfaces",
+    "Bend tube on a lever bender with correct former size, following marks and avoiding kinks",
+    "Dry-assemble the full run, check alignment and level with a spirit level, adjust and mark final positions",
+    "Support and clip pipes securely in their permanent locations",
+    "Heat each fitting evenly with torch and feed solder until capillary fill is complete",
+    "Allow joints to cool undisturbed then wipe away excess flux",
+    "Route, cut, clean, flux, assemble and solder remaining sections through floors, walls and loft identically",
+    "Pressure-test the finished system for leaks"
+  ]
+}

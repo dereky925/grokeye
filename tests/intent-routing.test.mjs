@@ -15,6 +15,8 @@ let wantsHighlight;
 let findCatalogChoreography;
 let catalogMotionCues;
 let resolveInstructionRoute;
+let wantsStepReview;
+let selectReviewStep;
 
 before(async () => {
   vite = await createServer({
@@ -35,6 +37,9 @@ before(async () => {
   ({ wantsHighlight } = await vite.ssrLoadModule("/src/lib/highlights.ts"));
   ({ resolveInstructionRoute } = await vite.ssrLoadModule(
     "/src/lib/instructionRouting.ts",
+  ));
+  ({ wantsStepReview, selectReviewStep } = await vite.ssrLoadModule(
+    "/src/lib/stepReview.ts",
   ));
   ({
     findCatalogChoreography,
@@ -494,4 +499,91 @@ test("authored choreography covers every catalog video and is documented", () =>
     assert.equal(markdown.includes("## `" + video.id + "`"), true);
   }
   assert.equal(findCatalogChoreography("unknown-video", 2, "move this"), null);
+});
+
+test("step-review grammar claims self-assessment asks and nothing else", () => {
+  for (const message of [
+    "How did I do on that step?",
+    "How'd I do?",
+    "How did that go?",
+    "Did I do that right?",
+    "Was that correct?",
+    "Grade my work",
+    "Review my technique",
+  ]) {
+    assert.equal(wantsStepReview(message), true, message);
+  }
+  for (const message of [
+    "How do I do this step?",
+    "What's the next step?",
+    "Highlight the cpu die",
+    "Where does this go?",
+  ]) {
+    assert.equal(wantsStepReview(message), false, message);
+  }
+});
+
+test("step review judges the previous step in a step's first half", () => {
+  const script = {
+    videoId: "x",
+    title: "t",
+    task: "t",
+    durationSeconds: 30,
+    steps: [
+      { n: 1, start: 0, end: 10, text: "a", detail: "d" },
+      { n: 2, start: 10, end: 20, text: "b", detail: "d" },
+      { n: 3, start: 20, end: 30, text: "c", detail: "d" },
+    ],
+  };
+  // Second half of a step -> that step.
+  assert.equal(selectReviewStep(script, 16).n, 2);
+  assert.equal(selectReviewStep(script, 19.9).n, 2);
+  // First half -> the step that just finished.
+  assert.equal(selectReviewStep(script, 11).n, 1);
+  assert.equal(selectReviewStep(script, 21).n, 2);
+  // First half of step 1 has no predecessor.
+  assert.equal(selectReviewStep(script, 1).n, 1);
+  // Past the end reviews the final step.
+  assert.equal(selectReviewStep(script, 45).n, 3);
+});
+
+test("every catalog video has a step script tiling its full runtime", async () => {
+  const { readdirSync } = await import("node:fs");
+  const videos = JSON.parse(
+    readFileSync(new URL("../public/videos/manifest.json", import.meta.url), "utf8"),
+  );
+  const baked = new Set(
+    readdirSync(new URL("../server/scripts", import.meta.url))
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => f.replace(/\.json$/, "")),
+  );
+
+  for (const video of videos) {
+    assert.equal(baked.has(video.id), true, `${video.id} has a step script`);
+    const script = JSON.parse(
+      readFileSync(
+        new URL(`../server/scripts/${video.id}.json`, import.meta.url),
+        "utf8",
+      ),
+    );
+    assert.ok(script.steps.length >= 3, `${video.id} has steps`);
+    assert.equal(script.steps[0].start, 0, `${video.id} starts at 0`);
+    script.steps.forEach((step, i) => {
+      assert.equal(step.n, i + 1, `${video.id} step ${i + 1} numbered`);
+      assert.ok(step.end > step.start, `${video.id} step ${i + 1} has a range`);
+      assert.ok(step.text && step.detail, `${video.id} step ${i + 1} has text`);
+      if (i > 0) {
+        assert.equal(
+          step.start,
+          script.steps[i - 1].end,
+          `${video.id} step ${i + 1} is contiguous`,
+        );
+      }
+    });
+    const last = script.steps[script.steps.length - 1];
+    assert.ok(
+      Math.abs(last.end - script.durationSeconds) < 1,
+      `${video.id} covers its full runtime`,
+    );
+  }
 });

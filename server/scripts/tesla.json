@@ -1,0 +1,104 @@
+{
+  "videoId": "tesla",
+  "title": "Rear drive unit disconnect walk-through",
+  "task": "pulling a Tesla rear drive unit",
+  "setting": "A gray Tesla is raised on blue jack stands on a concrete residential driveway beside grass. The silver rear drive unit already rests on the ground with its orange high-voltage cable still routed under the car. A floor jack, scattered bolts, and removed black underbody panels sit nearby. Work focuses under the rear subframe among suspension arms, half-shafts, the hub/knuckle, damper, and electrical connectors.",
+  "steps": [
+    {
+      "n": 1,
+      "start": 0,
+      "end": 29.6,
+      "text": "Confirm the vehicle is supported and the rear drive unit is out of the car",
+      "detail": "Wide rear shots show the raised bumper, the drive unit on the driveway with the orange HV cable attached, a floor jack, blue jack stand, and loose fasteners.",
+      "flags": [],
+      "expected": "HV system must already be disabled and the orange HV cable disconnected/capped BEFORE the drive unit is lowered; finding the unit on the ground with HV cable still routed is a critical safety violation"
+    },
+    {
+      "n": 2,
+      "start": 29.6,
+      "end": 88.8,
+      "text": "Trace the orange high-voltage cable along the rear subframe and clear underbody covers",
+      "detail": "Under-car views show the orange HV leads and connector at the subframe, blue jack stands supporting the body, and removed black shields plus bolts on the ground.",
+      "flags": [],
+      "expected": "After panels are clear the HV cable must be disconnected at the drive unit before any further work; merely tracing it while still attached is incorrect"
+    },
+    {
+      "n": 3,
+      "start": 88.8,
+      "end": 167.6,
+      "text": "Inspect rear suspension links, damper, and nearby brake and sensor lines",
+      "detail": "Close-ups pan control arms, bushings, the damper, coil spring area, hoses, and tire; a brief bumper cutaway and underbody grid shield appear as the camera repositions.",
+      "flags": [],
+      "expected": "Suspension, damper and brake-line inspection is valid only after HV is proven safe and disconnected; otherwise it is out of sequence"
+    },
+    {
+      "n": 4,
+      "start": 167.6,
+      "end": 207.1,
+      "text": "Locate the half-shafts and subframe mounts at the rear hub",
+      "detail": "Camera closes on Tesla-labeled suspension links, the half-shaft joint, rubber mounts, and nearby electrical plugs on the drive-unit side of the hub.",
+      "flags": [],
+      "expected": "Half-shaft and mount location is appropriate only once HV, coolant and electrical connectors are already released"
+    },
+    {
+      "n": 5,
+      "start": 207.1,
+      "end": 246.5,
+      "text": "Release the red secondary lock and unplug the hub sensor connector",
+      "detail": "A hand works beside the damper and brake rotor, focusing on the black wheel-speed sensor connector with its red lock tab before pulling the lead free.",
+      "flags": [],
+      "expected": "Wheel-speed sensor unlock and unplug is a correct subordinate action when performed after HV isolation"
+    },
+    {
+      "n": 6,
+      "start": 246.5,
+      "end": 335.3,
+      "text": "Check remaining suspension attachments around the drive-unit housing",
+      "detail": "Views return across half-shafts, the aluminum drive-unit casing, control arms, and coil spring, with a hand briefly near the spring perch amid some motion blur.",
+      "flags": [],
+      "expected": "Remaining suspension checks are acceptable only on an already-isolated drive unit; they do not replace prior HV/coolant disconnects"
+    },
+    {
+      "n": 7,
+      "start": 335.3,
+      "end": 374.7,
+      "text": "Inspect the upper control-arm bolt and knuckle fasteners",
+      "detail": "Close-ups show the upper bushing bolt above the coil spring and a fastener on the aluminum knuckle next to the brake rotor and tire.",
+      "flags": [],
+      "expected": "Upper-control-arm and knuckle fastener inspection is valid late-stage work provided all energy sources were isolated first"
+    },
+    {
+      "n": 8,
+      "start": 374.7,
+      "end": 394.5,
+      "text": "Survey the underbody work area and staged hardware",
+      "detail": "Wide side shots under the raised rear show jack stands, the orange HV cable, removed panels, scattered bolts, and a disconnected wiring pigtail on the concrete.",
+      "flags": [],
+      "expected": "Final area survey is correct only after the drive unit has been fully disconnected, lowered and all ports capped; scattered live HV cable indicates incomplete procedure"
+    }
+  ],
+  "afterClip": "Complete any remaining electrical and suspension disconnects, verify high-voltage isolation and support, then fully lower free or reinstall the rear drive unit to spec.",
+  "source": {
+    "title": "Tesla Repair",
+    "url": "/videos/tesla.mp4",
+    "siteName": "GrokEye catalog"
+  },
+  "durationSeconds": 394.5,
+  "generated": true,
+  "frameCount": 40,
+  "procedure": [
+    "Power off vehicle, chock wheels, disconnect 12V battery",
+    "Perform full high-voltage disable per Tesla service manual and verify zero energy",
+    "Raise vehicle and support on properly rated jack stands at approved lift points",
+    "Remove rear underbody panels and shields",
+    "Disconnect and cap the orange HV cable at the drive unit first",
+    "Disconnect coolant hoses and plug all ports",
+    "Unplug all LV electrical connectors and harness clips from the drive unit",
+    "Disconnect wheel-speed and other sensor connectors at the hubs",
+    "Remove half-shafts from knuckles/drive unit",
+    "Support drive unit with transmission jack",
+    "Unbolt drive-unit mounts and any remaining subframe attachments",
+    "Lower drive unit clear of vehicle and secure it",
+    "Cap all open HV/coolant ports and store fasteners ordered"
+  ]
+}

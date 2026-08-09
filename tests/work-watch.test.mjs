@@ -192,31 +192,68 @@ test("budget enforces spacing and the per-loop cap, and resets on loop", () => {
   assert.equal(budget.canFire(t).ok, true);
 });
 
-test("selectWatchFrames picks pre-action, peak, and the fresh settled frame", () => {
+test("selectWatchFrames sends a dense run of the action, not three sparse frames", () => {
   const frames = Array.from({ length: 8 }, (_, i) => ({
     url: `data:f${i}`,
     t: i * 125,
     mediaTime: i * 0.5,
     motion: i === 4 ? 12 : 1,
   }));
-  const picked = selectWatchFrames(
+  const strip = selectWatchFrames(
     frames,
     { actionStart: 1.6, peakTime: 2.0 },
     "data:fresh",
   );
-  // Last frame before 1.6s is index 3 (1.5s); peak nearest 2.0s is index 4.
-  assert.deepEqual(picked, ["data:f3", "data:f4", "data:fresh"]);
+  // One pre-action frame (index 3 at 1.5s), then every frame from the action
+  // onward, ending on the freshly captured settled frame.
+  assert.deepEqual(strip.frames, [
+    "data:f3",
+    "data:f4",
+    "data:f5",
+    "data:f6",
+    "data:f7",
+    "data:fresh",
+  ]);
+  // Exactly one leading frame is stale context, so the server can forbid
+  // reading current state off it.
+  assert.equal(strip.preCount, 1);
+  assert.equal(strip.frames.at(-1), "data:fresh");
 });
 
-test("selectWatchFrames dedupes and tolerates an empty buffer", () => {
+test("selectWatchFrames thins a long action but keeps the peak frame", () => {
+  const frames = Array.from({ length: 40 }, (_, i) => ({
+    url: `data:g${i}`,
+    t: i * 100,
+    mediaTime: i * 0.25,
+    motion: i === 22 ? 30 : 1,
+  }));
+  const strip = selectWatchFrames(
+    frames,
+    { actionStart: 1.0, peakTime: 5.5 },
+    "data:settled",
+  );
+  // Budgeted, not unbounded: 1 pre + <=9 action frames + the settled frame.
+  assert.ok(strip.frames.length <= 11, `got ${strip.frames.length}`);
+  assert.ok(strip.frames.length >= 6, `got ${strip.frames.length}`);
+  assert.equal(strip.preCount, 1);
+  // The strongest-motion frame survives the thinning.
+  assert.ok(strip.frames.includes("data:g22"));
+  // Chronological, deduped.
+  assert.equal(new Set(strip.frames).size, strip.frames.length);
+});
+
+test("selectWatchFrames never labels a lone frame as stale context", () => {
   const one = [{ url: "data:only", t: 0, mediaTime: 0, motion: 0 }];
-  assert.deepEqual(
-    selectWatchFrames(one, { actionStart: 5, peakTime: 5 }, "data:only"),
-    ["data:only"],
-  );
-  assert.deepEqual(
-    selectWatchFrames([], { actionStart: 0, peakTime: 0 }, "data:fresh"),
-    ["data:fresh"],
-  );
-  assert.deepEqual(selectWatchFrames([], { actionStart: 0, peakTime: 0 }, null), []);
+  const single = selectWatchFrames(one, { actionStart: 5, peakTime: 5 }, "data:only");
+  assert.deepEqual(single.frames, ["data:only"]);
+  // Nothing covers the action, so the one frame must still count as state.
+  assert.equal(single.preCount, 0);
+
+  const freshOnly = selectWatchFrames([], { actionStart: 0, peakTime: 0 }, "data:fresh");
+  assert.deepEqual(freshOnly.frames, ["data:fresh"]);
+  assert.equal(freshOnly.preCount, 0);
+
+  const empty = selectWatchFrames([], { actionStart: 0, peakTime: 0 }, null);
+  assert.deepEqual(empty.frames, []);
+  assert.equal(empty.preCount, 0);
 });

@@ -46,6 +46,7 @@ import {
   defaultManualX,
   fetchManual,
   identifyTopicFromFrame,
+  preferredManualStartIndex,
   snapPosition,
   speakText,
 } from "../lib/manual";
@@ -57,6 +58,10 @@ import {
   wantsTools,
 } from "../lib/tools";
 import { fetchVerify, parseVerifyAction } from "../lib/verify";
+import {
+  getCatalogVerifyRubric,
+  resolveCatalogVerifyLocal,
+} from "../lib/catalogVerify";
 import {
   fetchGuidance,
   normalizeGuidance,
@@ -76,7 +81,15 @@ import {
 import { cropSprite, fetchGhost } from "../lib/ghost";
 import GhostOverlay from "./GhostOverlay";
 import FlipReview from "./FlipReview";
+import StepReviewPanel from "./StepReviewPanel";
 import { fetchFlipReview, selectAttemptFrames, wantsFlipReview } from "../lib/flip";
+import {
+  captureStepFrames,
+  fetchStepReview,
+  fetchVideoScript,
+  selectReviewStep,
+  wantsStepReview,
+} from "../lib/stepReview";
 import { useWorkWatcher } from "../hooks/useWorkWatcher";
 import {
   WATCH_FLUSH_GRACE_MS,
@@ -132,6 +145,7 @@ import XPostCard from "./XPostCard";
 import type {
   FlipReviewState,
   GhostState,
+  StepReviewState,
   GuidanceCue,
   HighlightLabel,
   HighlightLink,
@@ -288,7 +302,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   // Proactive work-watcher: default ON for catalog clips, hard OFF for
   // live/flip. Machine-initiated speech goes through decideProactiveSpeech.
   const [watchEnabled, setWatchEnabled] = useState(!live && flipMode === false);
-  const [watchArmedLabel, setWatchArmedLabel] = useState<string | null>(null);
+  // Value is unread today; the setter keeps the watcher's armed signal wired.
+  const [, setWatchArmedLabel] = useState<string | null>(null);
   const watchEnabledRef = useRef(watchEnabled);
   const phaseRef = useRef<VoicePhase>("idle");
   const scanningRef = useRef(false);
@@ -328,6 +343,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   });
   const [flipReview, setFlipReview] = useState<FlipReviewState | null>(null);
   const flipReviewRef = useRef<FlipReviewState | null>(null);
+  const [stepReview, setStepReview] = useState<StepReviewState | null>(null);
+  const stepReviewRef = useRef<StepReviewState | null>(null);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const youtubeOpenRef = useRef(false);
   const [youtubeSeek, setYoutubeSeek] = useState<{
@@ -1592,6 +1609,65 @@ export default function VideoPlayer({ video, onBack }: Props) {
           return;
         }
 
+        // Step correctness — "how did I do on that step?" Judges ONE step:
+        // asking in the first half of a step means the step that just
+        // finished, second half means the current one. The answer is visual,
+        // not spoken: the panel shows the frames it judged plus a written
+        // verdict, so nothing goes to TTS or the voice bubble. Flip mode owns
+        // its own "how did I do" above.
+        if (!flipMode && !live && wantsStepReview(heard)) {
+          const script = await fetchVideoScript(video.id);
+          if (sessionId !== sessionRef.current) return;
+          if (script) {
+            stampTurn("verify", { question: heard });
+            const step = selectReviewStep(script, turnTime);
+            const opening: StepReviewState = {
+              review: null,
+              strip: [],
+              loading: true,
+              stepNumber: step.n,
+              stepText: step.text,
+              x: stepReviewRef.current?.x ?? 24,
+              y: stepReviewRef.current?.y ?? 360,
+            };
+            setStepReview(opening);
+            stepReviewRef.current = opening;
+
+            try {
+              const frames = await captureStepFrames(
+                video.src,
+                step.start,
+                step.end,
+              );
+              if (sessionId !== sessionRef.current) return;
+              const withStrip = { ...opening, strip: frames };
+              setStepReview(withStrip);
+              stepReviewRef.current = withStrip;
+
+              const review = await fetchStepReview({
+                videoId: video.id,
+                stepNumber: step.n,
+                question: heard,
+                frames,
+              });
+              if (sessionId !== sessionRef.current) return;
+              const done: StepReviewState = {
+                ...withStrip,
+                review,
+                loading: false,
+              };
+              setStepReview(done);
+              stepReviewRef.current = done;
+            } catch (err) {
+              if (sessionId !== sessionRef.current) return;
+              setStepReview(null);
+              stepReviewRef.current = null;
+              throw err;
+            }
+            return;
+          }
+        }
+
         const visualSubjectHint = [heard, ...alternatives]
           .map((message) =>
             resolveVisualSubjectHint(visualMemoryRef.current, {
@@ -1793,7 +1869,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
                 videoDescription: live ? undefined : video.description,
                 manualPdf: ikeaPdf,
                 manualPdfPages: ikeaPages,
-                videoId: topicWantsPamphlet ? video.id : undefined,
+                videoId: video.id,
               });
             } catch (err) {
               clearIfStillPlaceholder();
@@ -1808,7 +1884,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
               doc.mode = "pdf";
               doc.pdfUrl = ikeaPdf;
             }
-            const result = applyManualAction(manualRef.current, action, doc);
+            const result = applyManualAction(manualRef.current, action, doc, {
+              startIndex: preferredManualStartIndex(doc, {
+                videoId: video.id,
+                topic,
+              }),
+            });
             setManual(result.state);
             manualRef.current = result.state;
             if (result.state && !result.state.loading) {
@@ -1961,7 +2042,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
           stampTurn("verify");
           resumeIfAutoPaused();
           const activeTask = taskRef.current;
-          if (!activeTask) {
+          const catalogRubric = getCatalogVerifyRubric(video.id);
+          if (!activeTask && !catalogRubric) {
             await playSpoken(
               "I haven't guided you through anything yet.",
               sessionId,
@@ -1969,9 +2051,52 @@ export default function VideoPlayer({ video, onBack }: Props) {
             return;
           }
 
-          const afterFrame =
-            speechFrameRef.current ??
-            (el ? captureFrame(el, { maxW: 768, quality: 0.62 }) : null);
+          // Espresso / catalog: no frames — playhead + authored timeline only.
+          if (catalogRubric) {
+            const playhead =
+              Number.isFinite(el?.currentTime) && el
+                ? el.currentTime
+                : (speechTimeRef.current ?? 0);
+            const local = resolveCatalogVerifyLocal(video.id, playhead);
+            setUsedVision(false);
+            clearHighlights();
+            if (!local) {
+              await playSpoken(
+                "Pause after you lock the portafilter in, or after you fix the tamp, then ask me again.",
+                sessionId,
+              );
+              return;
+            }
+            if (activeTask) {
+              const nextTask: TaskSession = {
+                ...activeTask,
+                stage:
+                  local.verdict === "not_complete"
+                    ? "awaiting_action"
+                    : "resolved",
+                verdict: local.verdict,
+              };
+              commitTask(nextTask);
+              if (activeTask.ledgerEntryId) {
+                ledgerRef.current = recordVerdict(
+                  ledgerRef.current,
+                  activeTask.ledgerEntryId,
+                  {
+                    verdict: local.verdict,
+                    spoken: local.spoken,
+                    source: "single_verify",
+                    nowMs: Date.now(),
+                  },
+                );
+              }
+            }
+            await playSpoken(local.spoken, sessionId);
+            return;
+          }
+
+          const afterFrame = el
+            ? captureFrame(el, { maxW: 384, quality: 0.45 })
+            : speechFrameRef.current;
           if (!afterFrame) {
             await playSpoken(
               "I couldn't capture the view to verify that — try asking again.",
@@ -1980,8 +2105,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
             return;
           }
 
+          let beforeFrame = activeTask?.beforeFrame ?? undefined;
+          if (!beforeFrame) {
+            const history = readContextFrames();
+            const earliest = history
+              .filter((f) => f.url && Number.isFinite(f.t))
+              .sort((a, b) => a.t - b.t)[0];
+            beforeFrame = earliest?.url;
+          }
+          if (!beforeFrame) {
+            await playSpoken(
+              "I haven't guided you through anything yet.",
+              sessionId,
+            );
+            return;
+          }
+
           setUsedVision(true);
-          commitTask({ ...activeTask, stage: "verifying" });
+          commitTask({ ...activeTask!, stage: "verifying" });
           const openManual = manualRef.current;
           const manualStepText = openManual?.loading
             ? undefined
@@ -1990,16 +2131,16 @@ export default function VideoPlayer({ video, onBack }: Props) {
           let verification;
           try {
             verification = await fetchVerify({
-              goal: activeTask.goal,
-              instruction: activeTask.instruction,
-              beforeFrame: activeTask.beforeFrame,
+              goal: activeTask!.goal,
+              instruction: activeTask!.instruction,
+              beforeFrame,
               afterFrame,
               videoTitle: video.title,
               manualStepText,
             });
           } catch {
             if (sessionId !== sessionRef.current) return;
-            commitTask({ ...activeTask, stage: "awaiting_action" });
+            commitTask({ ...activeTask!, stage: "awaiting_action" });
             await playSpoken(
               "I couldn't verify that — try asking again.",
               sessionId,
@@ -2009,27 +2150,28 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
           if (sessionId !== sessionRef.current) return;
           clearHighlights();
-          const nextTask: TaskSession = {
-            ...activeTask,
-            stage:
-              verification.verdict === "not_complete"
-                ? "awaiting_action"
-                : "resolved",
-            verdict: verification.verdict,
-          };
-          commitTask(nextTask);
-          // Single-task verify and the session audit share one verdict store.
-          if (activeTask.ledgerEntryId) {
-            ledgerRef.current = recordVerdict(
-              ledgerRef.current,
-              activeTask.ledgerEntryId,
-              {
-                verdict: verification.verdict,
-                spoken: verification.spoken,
-                source: "single_verify",
-                nowMs: Date.now(),
-              },
-            );
+          {
+            const nextTask: TaskSession = {
+              ...activeTask!,
+              stage:
+                verification.verdict === "not_complete"
+                  ? "awaiting_action"
+                  : "resolved",
+              verdict: verification.verdict,
+            };
+            commitTask(nextTask);
+            if (activeTask!.ledgerEntryId) {
+              ledgerRef.current = recordVerdict(
+                ledgerRef.current,
+                activeTask!.ledgerEntryId,
+                {
+                  verdict: verification.verdict,
+                  spoken: verification.spoken,
+                  source: "single_verify",
+                  nowMs: Date.now(),
+                },
+              );
+            }
           }
 
           if (
@@ -2521,6 +2663,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       readFlipFrames,
       rememberVisualSubject,
       resumeIfAutoPaused,
+      readContextFrames,
       runSessionAudit,
       scheduleAfterCapture,
       sealTaskIfReady,
@@ -2818,24 +2961,6 @@ export default function VideoPlayer({ video, onBack }: Props) {
             <span className="video-scan-bar" />
           </div>
         )}
-        {usedVision && voiceBusy && (
-          <div
-            className={`frame-freeze-chip ${task ? "with-task" : ""}`}
-            aria-hidden
-          >
-            <span className="frame-freeze-dot" />
-            Grok is watching
-          </div>
-        )}
-        {watchEnabled && !live && !flipMode && phase === "idle" && (
-          <div
-            className={`frame-freeze-chip watch-idle ${task ? "with-task" : ""}`}
-            aria-hidden
-          >
-            <span className="frame-freeze-dot" />
-            {watchArmedLabel ?? "Watching"}
-          </div>
-        )}
         {task && <TaskStateChip task={task} />}
         {xQueue[0] && (
           <XPostCard
@@ -3006,6 +3131,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
           onClose={() => {
             setFlipReview(null);
             flipReviewRef.current = null;
+          }}
+        />
+      )}
+
+      {stepReview && (
+        <StepReviewPanel
+          state={stepReview}
+          onChangePosition={(x, y) => {
+            setStepReview((r) => {
+              if (!r) return r;
+              const next = { ...r, x, y };
+              stepReviewRef.current = next;
+              return next;
+            });
+          }}
+          onClose={() => {
+            setStepReview(null);
+            stepReviewRef.current = null;
           }}
         />
       )}

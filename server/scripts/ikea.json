@@ -1,0 +1,99 @@
+{
+  "videoId": "ikea",
+  "title": "Seat the MICKE desk end frame",
+  "task": "attaching the second end frame to an IKEA MICKE desk",
+  "setting": "Living-room floor with a round rug and hardwood. A light wood MICKE desktop lies upside-down; one white metal end/leg frame is already on the far short edge. A matching loose end frame, a small bag of fasteners, and a black bit/socket kit are used nearby amid a TV console, sofa, and guitar.",
+  "steps": [
+    {
+      "n": 1,
+      "start": 0,
+      "end": 4,
+      "text": "Locate the loose end frame beside the desktop",
+      "detail": "Overhead view shows a white rectangular end frame lying on the round rug with the assembly area just beyond.",
+      "flags": [],
+      "expected": "All parts (end frame + fasteners + driver kit) must be located and gathered together at the outset; locating only the frame is incomplete"
+    },
+    {
+      "n": 2,
+      "start": 4,
+      "end": 8,
+      "text": "Pick up the second end frame",
+      "detail": "Hands lift the white end/leg frame while the wooden desktop rests on the floor with one end frame already fitted on the far side.",
+      "flags": [],
+      "expected": "Picking up the end frame is correct only after fasteners and driver are already in hand; otherwise out of order"
+    },
+    {
+      "n": 3,
+      "start": 8,
+      "end": 16,
+      "text": "Orient the mounting rail toward the free short end",
+      "detail": "The person holds the frame by its long sides so the holed mounting rail faces the open short edge of the desktop and steps into place.",
+      "flags": [],
+      "expected": "Orientation of the mounting rail is correct only when screws and loaded driver are ready for immediate use"
+    },
+    {
+      "n": 4,
+      "start": 16,
+      "end": 29,
+      "text": "Align and seat the end frame on the free short end",
+      "detail": "Kneeling over the panel, the person lines the white rail along the desktop edge and presses the frame down until it sits flush on the free short end.",
+      "flags": [],
+      "expected": "Fasteners and driver must be prepared BEFORE any alignment or seating; seating the frame first is out of order"
+    },
+    {
+      "n": 5,
+      "start": 29,
+      "end": 40,
+      "text": "Step around and confirm both end frames are placed",
+      "detail": "The assembler walks around the desk—now showing white end frames on both short sides—then moves toward hardware laid out on the floor.",
+      "flags": [],
+      "expected": "Frames must be fastened before any confirmation walk-around; checking unsecured frames is premature and out of order"
+    },
+    {
+      "n": 6,
+      "start": 40,
+      "end": 44,
+      "text": "Pick up the bag of fasteners",
+      "detail": "Both hands hold a clear plastic bag of screws and fittings with the partially assembled desk visible behind.",
+      "flags": [],
+      "expected": "Fastener bag must be obtained and opened before the frame is ever picked up or oriented; retrieving it after seating is out of order"
+    },
+    {
+      "n": 7,
+      "start": 44,
+      "end": 52,
+      "text": "Open the driver bit kit",
+      "detail": "The person sets a black POKOT case on the rug and opens the lid to reveal rows of sockets and driver bits.",
+      "flags": [],
+      "expected": "Driver kit must be opened and ready before frame orientation begins; opening it after seating is out of order"
+    },
+    {
+      "n": 8,
+      "start": 52,
+      "end": 60,
+      "text": "Remove the liner and select a bit",
+      "detail": "A white insert is lifted out of the case and a hand reaches into the open tray to choose a driver bit for the fasteners.",
+      "flags": [],
+      "expected": "Bit must be selected and loaded before alignment/seating so fastening can occur at once; selecting the bit after seating is out of order"
+    }
+  ],
+  "afterClip": "Drive the fasteners to lock both end frames to the desktop, then continue the remaining MICKE assembly steps from the manual.",
+  "source": {
+    "title": "IKEA Furniture",
+    "url": "/videos/ikea.mp4",
+    "siteName": "GrokEye catalog"
+  },
+  "durationSeconds": 60,
+  "generated": true,
+  "frameCount": 15,
+  "procedure": [
+    "Verify desktop is upside-down on protected surface with first end frame already securely fastened",
+    "Gather second end frame together with fastener bag and driver kit before any positioning",
+    "Open fastener bag, identify correct screws, open driver kit and seat matching bit in tool",
+    "Orient second end frame so mounting rail/holes face the free short edge of desktop",
+    "Align end-frame holes exactly with pre-drilled holes on free short end",
+    "Insert every screw through frame into desktop while holding alignment",
+    "Tighten all screws fully with driver until frame is flush and rigid",
+    "Confirm second end frame is secure and assembly stable before moving desk"
+  ]
+}

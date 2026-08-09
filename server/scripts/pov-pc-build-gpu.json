@@ -1,0 +1,90 @@
+{
+  "videoId": "pov-pc-build-gpu",
+  "title": "Install the GPU",
+  "task": "installing a graphics card and identifying its power connections",
+  "setting": "A white open PC case sits on a labeled anti-static work mat amid component boxes, scissors, pliers, and a screwdriver. The builder unboxes an XFX Speedster SWFT 319 Radeon RX 6800 triple-fan card and fits it into the motherboard PCIe slot from a first-person view.",
+  "steps": [
+    {
+      "n": 1,
+      "start": 0,
+      "end": 20.2,
+      "text": "Unbox the graphics card",
+      "detail": "Hands open the XFX SWIFT 319 retail box, lift the inner lid, and take the triple-fan GPU out of its foam tray.",
+      "flags": [],
+      "expected": "Case must already be prepped (slot covers removed) and anti-static grounding applied BEFORE unboxing; unboxing itself is otherwise the correct first handling step"
+    },
+    {
+      "n": 2,
+      "start": 20.2,
+      "end": 36.3,
+      "text": "Inspect both sides of the GPU",
+      "detail": "The builder holds the card up to show the three fans, flips it to reveal the metal backplate, then brings it near the open white case.",
+      "flags": [],
+      "expected": "Inspection is correct; power-connector identification must occur during this inspection, not later"
+    },
+    {
+      "n": 3,
+      "start": 36.3,
+      "end": 56.5,
+      "text": "Remove the rear PCIe slot covers",
+      "detail": "With a screwdriver on the rear I/O panel, the builder loosens the slot-cover screws and pulls the blanking plates out of the chassis.",
+      "flags": [],
+      "expected": "Removing slot covers is required but must be completed BEFORE unboxing or handling the GPU; doing so afterward is out of order"
+    },
+    {
+      "n": 4,
+      "start": 56.5,
+      "end": 84.7,
+      "text": "Orient the GPU at the case opening",
+      "detail": "The card is held beside the case and turned so its rear bracket faces the open slot-cover gap and the PCIe edge faces the motherboard.",
+      "flags": [],
+      "expected": "Orientation is correct once covers are removed and the card has been inspected"
+    },
+    {
+      "n": 5,
+      "start": 84.7,
+      "end": 100.8,
+      "text": "Line the PCIe edge up with the x16 slot",
+      "detail": "A hand reaches inside to clear the path, then both hands guide the long edge of the GPU toward the motherboard slot through the lower case opening.",
+      "flags": [],
+      "expected": "Alignment with the x16 slot is correct at this stage"
+    },
+    {
+      "n": 6,
+      "start": 100.8,
+      "end": 117,
+      "text": "Identify the GPU power connectors",
+      "detail": "The builder holds up a PCIe power-cable end, then shows the power sockets on the side of the card with an on-screen close-up of the connector pins.",
+      "flags": [],
+      "expected": "Power connectors must be identified during initial inspection BEFORE any alignment or insertion; performing identification after lining up the card is out of order"
+    },
+    {
+      "n": 7,
+      "start": 117,
+      "end": 125,
+      "text": "Press the GPU level into the PCIe slot",
+      "detail": "Both hands push the graphics card straight into the motherboard x16 slot until it sits flush across the lower case opening.",
+      "flags": [],
+      "expected": "Full seating into the slot is correct, yet the bracket must then be screwed down immediately and only afterward are the power cables attached"
+    }
+  ],
+  "afterClip": "Screw down the GPU bracket and plug the PCIe power cables into the card",
+  "source": {
+    "title": "POV PC Build Guide — GPU",
+    "url": "/videos/pov-pc-build-gpu.mp4",
+    "siteName": "GrokEye catalog"
+  },
+  "durationSeconds": 125,
+  "generated": true,
+  "frameCount": 31,
+  "procedure": [
+    "Power off and unplug the PC, then ground yourself with an anti-static wrist strap on the anti-static mat",
+    "Remove the PCIe slot blanking plates for the target x16 slot before handling the GPU",
+    "Unbox the GPU and inspect both sides for damage while identifying the exact power connector types and pin layout required",
+    "Confirm the PSU has matching free PCIe power cables",
+    "Orient the GPU so the bracket aligns with the rear chassis openings and the edge connector with the motherboard x16 slot",
+    "Insert the GPU straight into the slot with even pressure until fully seated and the retention clip engages",
+    "Secure the rear bracket to the chassis with the appropriate screws",
+    "Connect the identified PCIe power cables firmly to the GPU power sockets"
+  ]
+}

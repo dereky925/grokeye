@@ -44,6 +44,10 @@ const VERIFY_POSITIVES = [
   "verify it",
   "did i do that right",
   "did i do it right",
+  "did i do this right",
+  "did i miss a step",
+  "did i miss any steps",
+  "wait did i miss a step",
 ];
 
 test("session audit grammar matches its phrasings", () => {
