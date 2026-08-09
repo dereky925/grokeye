@@ -1,5 +1,12 @@
 # Video sources
 
+## POV Espresso Bar
+
+- Creator: GrokEye team (self-filmed at Grokathon 2026, original `IMG_1672.MOV`)
+- Source: original footage, no external source
+- Local edit: full 42 s clip, 1920x1080 HEVC → 1280x720 H.264/AAC, fast-start
+  metadata; audio kept for the first 5 s (grinder ambience), silenced after.
+
 ## POV Copper Plumbing
 
 - Creator: Loving Plumbing
