@@ -632,6 +632,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
     // One beat so the reply bubble paints before audio starts. Not rAF —
     // rAF never fires in a backgrounded tab and would hang the turn here.
     await new Promise((r) => setTimeout(r, 50));
+    let watchdog: number | null = null;
     try {
       await new Promise<void>((resolve, reject) => {
         const done = () => {
@@ -641,9 +642,30 @@ export default function VideoPlayer({ video, onBack }: Props) {
         audio.__resolveSpeak = done;
         audio.onended = done;
         audio.onerror = () => reject(new Error("Could not play voice reply"));
+        // Failsafe: a stalled element must never strand the turn in
+        // "speaking" — that parks the main recognizer and reads as a dead
+        // mic. Resolve at clip length + slack, or 30s if length is unknown.
+        const arm = (ms: number) => {
+          if (watchdog != null) window.clearTimeout(watchdog);
+          watchdog = window.setTimeout(() => {
+            try {
+              audio.pause();
+            } catch {
+              /* ignore */
+            }
+            done();
+          }, ms);
+        };
+        arm(30000);
+        audio.onloadedmetadata = () => {
+          if (Number.isFinite(audio.duration) && audio.duration > 0) {
+            arm(audio.duration * 1000 + 5000);
+          }
+        };
         audio.play().catch(reject);
       });
     } finally {
+      if (watchdog != null) window.clearTimeout(watchdog);
       URL.revokeObjectURL(audioUrl);
       if (audioRef.current === audio) {
         audioRef.current = null;
