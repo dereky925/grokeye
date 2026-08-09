@@ -1395,98 +1395,45 @@ const toolsChecklistCache = new Map();
 const manualCache = new Map();
 const manualInflight = new Map();
 
-app.post("/api/manual", async (req, res) => {
-  try {
-    const videoTitle = String(req.body?.videoTitle || "").trim();
-    const videoDescription = String(req.body?.videoDescription || "").trim();
-    const topic = String(req.body?.topic || videoTitle || "sushi").trim();
-    const cacheKey = topic.toLowerCase().replace(/\s+/g, " ");
+/**
+ * On-screen steps come from the clip's pre-baked script (server/scripts/
+ * <videoId>.json) — the same steps the correctness review judges against, so
+ * "step 3" means one thing across the whole app.
+ *
+ * Steps are never generated at request time. Web search used to fill this in
+ * and would answer a question about the espresso clip with a machine
+ * manufacturer's site, which is not what the person on screen is doing.
+ */
+app.post("/api/manual", (req, res) => {
+  const videoId = String(req.body?.videoId || "").trim();
+  const script = videoScripts.get(videoId);
 
-    if (manualCache.has(cacheKey)) {
-      return res.json({ manual: manualCache.get(cacheKey), cached: true });
-    }
-
-    // Reuse in-flight request so double-opens don't double-pay latency
-    if (manualInflight.has(cacheKey)) {
-      const manual = await manualInflight.get(cacheKey);
-      return res.json({ manual, cached: true });
-    }
-
-    const prompt = [
-      `Create a concise step-by-step how-to manual for: ${topic}.`,
-      videoTitle ? `The viewer is watching a video titled "${videoTitle}".` : "",
-      videoDescription ? `Video description: ${videoDescription}.` : "",
-      "Use web search once to find ONE reputable public how-to guide for THIS exact topic.",
-      "Pick the most authoritative source for the subject: for IKEA / furniture assembly prefer the official IKEA product assembly instructions or a clear desk-building guide that cites IKEA steps; for repairs/DIY prefer iFixit, manufacturer service docs, or a well-known enthusiast guide; for cooking prefer Serious Eats, Just One Cookbook, BBC Good Food, or NYT Cooking; otherwise use an official or widely-trusted tutorial.",
-      "Return ONLY valid JSON matching this schema:",
-      JSON.stringify({
-        title: "string",
-        topic: "string",
-        source: {
-          title: "page title",
-          url: "https://...",
-          siteName: "example.com",
+  if (script?.steps?.length) {
+    return res.json({
+      manual: {
+        title: script.title,
+        topic: script.task,
+        source: script.source || {
+          title: script.title,
+          url: "",
+          siteName: "this clip",
         },
-        steps: [{ n: 1, text: "short imperative step" }],
-      }),
-      "Use as many steps as the task genuinely needs: minimum 2, maximum 10. Something trivial like opening a bottle takes 2-4; an involved repair or furniture assembly takes 8-10.",
-      "Never pad with filler to reach a count, and never cram distinct actions into one step to stay under it.",
-      "Rules: one short imperative sentence per step, no markdown, real https source URL relevant to the topic.",
-      /ikea|desk|furniture|assembly/i.test(topic)
-        ? "This is an assembly job: prefer ikea.com or the manufacturer's own pamphlet as the source."
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const job = (async () => {
-      const response = await fetch("https://api.x.ai/v1/responses", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "grok-4.5",
-          tools: [{ type: "web_search" }],
-          temperature: 0.2,
-          input: [
-            {
-              role: "system",
-              content:
-                "You research and produce grounded how-to manuals with real citations. Output JSON only. Be fast and concise.",
-            },
-            { role: "user", content: prompt },
-          ],
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        console.error("Manual error:", data);
-        throw new Error(data?.error || data?.message || "Manual generation failed");
-      }
-
-      const raw = extractResponseText(data);
-      const parsed = parseManualJson(raw);
-      const manual = normalizeManual(parsed, topic);
-      manualCache.set(cacheKey, manual);
-      return manual;
-    })();
-
-    manualInflight.set(cacheKey, job);
-    try {
-      const manual = await job;
-      res.json({ manual, cached: false });
-    } finally {
-      manualInflight.delete(cacheKey);
-    }
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({
-      error: err instanceof Error ? err.message : "Manual generation failed",
+        steps: script.steps.map((s) => ({
+          n: s.n,
+          text: s.text,
+          // Bounds ride along so the overlay can follow the playhead.
+          start: s.start,
+          end: s.end,
+        })),
+      },
+      authored: true,
     });
   }
+
+  res.status(404).json({
+    error:
+      "No steps for this video. Bake them with: npm run scripts:bake",
+  });
 });
 
 /** Web-answer cache so a repeated question skips the search round-trip. */

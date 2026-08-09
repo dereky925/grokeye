@@ -50,6 +50,9 @@ export type TaskSession = {
 export type ManualStep = {
   n: number;
   text: string;
+  /** Authored clip bounds, when the steps come from a baked script. */
+  start?: number;
+  end?: number;
 };
 
 export type ManualSource = {
