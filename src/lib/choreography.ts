@@ -513,3 +513,7 @@ export function findCatalogChoreography(
     .sort((a, b) => b.score - a.score)[0];
   return best.score > 0 || deictic ? best.cue : null;
 }
+
+export function getCatalogMotionById(id: string): CatalogMotionCue | null {
+  return CATALOG_MOTION_CUES.find((cue) => cue.id === id) ?? null;
+}

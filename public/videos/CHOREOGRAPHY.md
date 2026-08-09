@@ -178,8 +178,9 @@ ambience), silenced after — no speech bleed into the recognizer during asks.
 | 0:37–0:42 | Hands come to rest; the corrected setup is in place. | End state. | Live fallback only. |
 
 Good live phrasings: “How do I tamp this?”, “Show me how to press the puck,” “How
-should I pack the grounds?” (Verification asks like “Did she do that right?” stay on
-the live `/api/chat` frame path by design.)
+should I pack the grounds?” Process verify asks (“Did I miss a step?”, “check my
+work”) use the espresso timeline in `WATCH-WINDOWS.md` / `catalogVerify.ts` —
+playhead-matched, no vision frames.
 
 ## Maintenance checklist
 

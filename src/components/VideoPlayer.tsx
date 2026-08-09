@@ -45,6 +45,7 @@ import {
   applyManualAction,
   fetchManual,
   identifyTopicFromFrame,
+  preferredManualStartIndex,
   snapPosition,
   speakText,
 } from "../lib/manual";
@@ -56,6 +57,10 @@ import {
   wantsTools,
 } from "../lib/tools";
 import { fetchVerify, parseVerifyAction } from "../lib/verify";
+import {
+  getCatalogVerifyRubric,
+  resolveCatalogVerifyLocal,
+} from "../lib/catalogVerify";
 import {
   fetchGuidance,
   normalizeGuidance,
@@ -1658,7 +1663,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
                 videoDescription: live ? undefined : video.description,
                 manualPdf: ikeaPdf,
                 manualPdfPages: ikeaPages,
-                videoId: topicWantsPamphlet ? video.id : undefined,
+                videoId: video.id,
               });
             } catch (err) {
               clearIfStillPlaceholder();
@@ -1673,7 +1678,12 @@ export default function VideoPlayer({ video, onBack }: Props) {
               doc.mode = "pdf";
               doc.pdfUrl = ikeaPdf;
             }
-            const result = applyManualAction(manualRef.current, action, doc);
+            const result = applyManualAction(manualRef.current, action, doc, {
+              startIndex: preferredManualStartIndex(doc, {
+                videoId: video.id,
+                topic,
+              }),
+            });
             setManual(result.state);
             manualRef.current = result.state;
             if (result.state && !result.state.loading) {
@@ -1822,7 +1832,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
           stampTurn("verify");
           resumeIfAutoPaused();
           const activeTask = taskRef.current;
-          if (!activeTask) {
+          const catalogRubric = getCatalogVerifyRubric(video.id);
+          if (!activeTask && !catalogRubric) {
             await playSpoken(
               "I haven't guided you through anything yet.",
               sessionId,
@@ -1830,9 +1841,52 @@ export default function VideoPlayer({ video, onBack }: Props) {
             return;
           }
 
-          const afterFrame =
-            speechFrameRef.current ??
-            (el ? captureFrame(el, { maxW: 768, quality: 0.62 }) : null);
+          // Espresso / catalog: no frames — playhead + authored timeline only.
+          if (catalogRubric) {
+            const playhead =
+              Number.isFinite(el?.currentTime) && el
+                ? el.currentTime
+                : (speechTimeRef.current ?? 0);
+            const local = resolveCatalogVerifyLocal(video.id, playhead);
+            setUsedVision(false);
+            clearHighlights();
+            if (!local) {
+              await playSpoken(
+                "Pause after you lock the portafilter in, or after you fix the tamp, then ask me again.",
+                sessionId,
+              );
+              return;
+            }
+            if (activeTask) {
+              const nextTask: TaskSession = {
+                ...activeTask,
+                stage:
+                  local.verdict === "not_complete"
+                    ? "awaiting_action"
+                    : "resolved",
+                verdict: local.verdict,
+              };
+              commitTask(nextTask);
+              if (activeTask.ledgerEntryId) {
+                ledgerRef.current = recordVerdict(
+                  ledgerRef.current,
+                  activeTask.ledgerEntryId,
+                  {
+                    verdict: local.verdict,
+                    spoken: local.spoken,
+                    source: "single_verify",
+                    nowMs: Date.now(),
+                  },
+                );
+              }
+            }
+            await playSpoken(local.spoken, sessionId);
+            return;
+          }
+
+          const afterFrame = el
+            ? captureFrame(el, { maxW: 384, quality: 0.45 })
+            : speechFrameRef.current;
           if (!afterFrame) {
             await playSpoken(
               "I couldn't capture the view to verify that — try asking again.",
@@ -1841,8 +1895,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
             return;
           }
 
+          let beforeFrame = activeTask?.beforeFrame ?? undefined;
+          if (!beforeFrame) {
+            const history = readContextFrames();
+            const earliest = history
+              .filter((f) => f.url && Number.isFinite(f.t))
+              .sort((a, b) => a.t - b.t)[0];
+            beforeFrame = earliest?.url;
+          }
+          if (!beforeFrame) {
+            await playSpoken(
+              "I haven't guided you through anything yet.",
+              sessionId,
+            );
+            return;
+          }
+
           setUsedVision(true);
-          commitTask({ ...activeTask, stage: "verifying" });
+          commitTask({ ...activeTask!, stage: "verifying" });
           const openManual = manualRef.current;
           const manualStepText = openManual?.loading
             ? undefined
@@ -1851,16 +1921,16 @@ export default function VideoPlayer({ video, onBack }: Props) {
           let verification;
           try {
             verification = await fetchVerify({
-              goal: activeTask.goal,
-              instruction: activeTask.instruction,
-              beforeFrame: activeTask.beforeFrame,
+              goal: activeTask!.goal,
+              instruction: activeTask!.instruction,
+              beforeFrame,
               afterFrame,
               videoTitle: video.title,
               manualStepText,
             });
           } catch {
             if (sessionId !== sessionRef.current) return;
-            commitTask({ ...activeTask, stage: "awaiting_action" });
+            commitTask({ ...activeTask!, stage: "awaiting_action" });
             await playSpoken(
               "I couldn't verify that — try asking again.",
               sessionId,
@@ -1870,27 +1940,28 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
           if (sessionId !== sessionRef.current) return;
           clearHighlights();
-          const nextTask: TaskSession = {
-            ...activeTask,
-            stage:
-              verification.verdict === "not_complete"
-                ? "awaiting_action"
-                : "resolved",
-            verdict: verification.verdict,
-          };
-          commitTask(nextTask);
-          // Single-task verify and the session audit share one verdict store.
-          if (activeTask.ledgerEntryId) {
-            ledgerRef.current = recordVerdict(
-              ledgerRef.current,
-              activeTask.ledgerEntryId,
-              {
-                verdict: verification.verdict,
-                spoken: verification.spoken,
-                source: "single_verify",
-                nowMs: Date.now(),
-              },
-            );
+          {
+            const nextTask: TaskSession = {
+              ...activeTask!,
+              stage:
+                verification.verdict === "not_complete"
+                  ? "awaiting_action"
+                  : "resolved",
+              verdict: verification.verdict,
+            };
+            commitTask(nextTask);
+            if (activeTask!.ledgerEntryId) {
+              ledgerRef.current = recordVerdict(
+                ledgerRef.current,
+                activeTask!.ledgerEntryId,
+                {
+                  verdict: verification.verdict,
+                  spoken: verification.spoken,
+                  source: "single_verify",
+                  nowMs: Date.now(),
+                },
+              );
+            }
           }
 
           if (
@@ -2363,6 +2434,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
       readFlipFrames,
       rememberVisualSubject,
       resumeIfAutoPaused,
+      readContextFrames,
       runSessionAudit,
       scheduleAfterCapture,
       sealTaskIfReady,

@@ -54,6 +54,36 @@ here exists in the runtime table and vice versa.
 | --- | --- | --- | --- |
 | `plumbing-torch-safety` | 0:50–1:29 | danger | Torch handling while soldering: open flame at/near visibly flammable material, lit torch set down unattended. Heat/material state is invisible, so most checks here should come back `unclear` → silence. |
 
+## Catalog verify rubrics
+
+Hand-authored *process* checklists for explicit user asks like “did I do this
+right?” / “check my work” / “did I miss a step?” on a catalog clip.
+
+For `pov-espresso-tamp`, verification is **text/timeline only** (no frames, no
+Grok vision round-trip): the playhead is matched to authored beats from
+`CHOREOGRAPHY.md` so the intentional skip-tamp ask is instant and reliable.
+Runtime: `src/lib/catalogVerify.ts` (`resolveCatalogVerifyLocal`).
+
+### `pov-espresso-tamp`
+
+**Goal:** Complete espresso portafilter prep: dose, tamp flat, then lock into the group head.
+
+| Step | Correct process |
+| --- | --- |
+| 1 | Dose and grind espresso into the portafilter under the grinder |
+| 2 | Tamp the puck flat and level with the tamper on the counter |
+| 3 | Lock the tamped portafilter fully into the group head |
+
+**Timeline beats (playhead → call):**
+
+| Time | Verdict | Call |
+| --- | --- | --- |
+| 0:06–0:28 | not_complete | Locked without tamp; pull out and tamp |
+| 0:28–0:33 | not_complete | On counter for tamp — tamp then lock |
+| 0:33–0:42 | complete | Tamped and locked |
+
+Pause in the ask window (~0:14–0:24) for the miss, or after the fix (~0:37) for the pass.
+
 ## Maintenance checklist
 
 - Re-check timestamps after any video re-edit; windows drift with the footage.
