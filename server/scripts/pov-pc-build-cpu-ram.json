@@ -1,0 +1,105 @@
+{
+  "videoId": "pov-pc-build-cpu-ram",
+  "title": "Seat the CPU and install DDR4",
+  "task": "seating an Intel CPU and installing DDR4 RAM",
+  "setting": "Top-down POV over a black Gigabyte LGA1700 motherboard on a large labeled anti-static PC-build mat. Scissors, pliers, thermal paste, cables, and retail packaging sit on the white desk around the board. Hands unbox an Intel Core i5-12600KF, seat it in the open socket, then install a G.Skill Ripjaws DDR4 kit into the DIMM slots.",
+  "steps": [
+    {
+      "n": 1,
+      "start": 0,
+      "end": 15.8,
+      "text": "Unbox the CPU and lift out the inner carrier",
+      "detail": "Hands hold the teal Intel Core i5 retail box over the board, open it, and remove the brown cardboard carrier that holds the CPU.",
+      "flags": []
+    },
+    {
+      "n": 2,
+      "start": 15.8,
+      "end": 27.7,
+      "text": "Free the CPU from its protective packaging and inspect it",
+      "detail": "The CPU is pulled from the clear plastic clamshell, the empty shell is set aside, and both faces of the bare chip are checked.",
+      "flags": []
+    },
+    {
+      "n": 3,
+      "start": 27.7,
+      "end": 47.5,
+      "text": "Bring the CPU to the board and locate the socket",
+      "detail": "The CPU is held near the rear I/O area while on-screen labels call out the model, then a finger points at the still-closed LGA socket.",
+      "flags": []
+    },
+    {
+      "n": 4,
+      "start": 47.5,
+      "end": 55.4,
+      "text": "Open the socket retention lever and lift the load plate",
+      "detail": "The left hand pushes the retention arm out and up and raises the load plate so the contact bed is fully exposed.",
+      "flags": []
+    },
+    {
+      "n": 5,
+      "start": 55.4,
+      "end": 63.4,
+      "text": "Align the CPU notches and lower it straight into the socket",
+      "detail": "Both hands hold the CPU IHS-up over the open socket, match the corner marks, and set it flat onto the contacts without sliding.",
+      "flags": []
+    },
+    {
+      "n": 6,
+      "start": 63.4,
+      "end": 91.1,
+      "text": "Close the load plate and lock the retention lever",
+      "detail": "The load plate is folded down over the seated CPU, the lever is hooked under its tab, and pressed fully home with firm force.",
+      "flags": []
+    },
+    {
+      "n": 7,
+      "start": 91.1,
+      "end": 103,
+      "text": "Remove and discard the socket protector",
+      "detail": "The black LGA1700 plastic cover that popped free with the load plate is lifted away and the installed CPU is left clear.",
+      "flags": []
+    },
+    {
+      "n": 8,
+      "start": 103,
+      "end": 118.8,
+      "text": "Unbox the DDR4 kit and take out both modules",
+      "detail": "The G.Skill Ripjaws blister pack is opened and the two black DIMMs are removed and held up over the board.",
+      "flags": []
+    },
+    {
+      "n": 9,
+      "start": 118.8,
+      "end": 130.7,
+      "text": "Match the DIMM key and open the slot latches",
+      "detail": "One module is held beside the DIMM banks while a finger opens the end latches on the highlighted DDR4 slots.",
+      "flags": []
+    },
+    {
+      "n": 10,
+      "start": 130.7,
+      "end": 146.5,
+      "text": "Press both sticks in evenly until the latches click",
+      "detail": "The modules are aligned to the keyed slots and pushed down at both ends so the retention clips snap shut over them.",
+      "flags": []
+    },
+    {
+      "n": 11,
+      "start": 146.5,
+      "end": 158.4,
+      "text": "Confirm the CPU and RAM are fully seated",
+      "detail": "Both hands frame the motherboard, showing the locked CPU load plate and the two RAM sticks sitting flush in their slots.",
+      "flags": []
+    }
+  ],
+  "afterClip": "Install the CPU cooler on the seated processor",
+  "source": {
+    "title": "POV PC Build Guide — CPU & RAM",
+    "url": "/videos/pov-pc-build-cpu-ram.mp4",
+    "siteName": "GrokEye catalog"
+  },
+  "durationSeconds": 158.4,
+  "generated": true,
+  "frameCount": 40
+}

@@ -1,0 +1,81 @@
+{
+  "videoId": "sushi",
+  "title": "Spread rice and roll salmon sushi",
+  "task": "making an inside-out style sushi roll with salmon and vegetables",
+  "setting": "Overhead view of a white cutting board prep station. A plastic-wrapped bamboo sushi mat sits in the center. Nearby are a bowl of sushi rice, sheets of nori, raw salmon strips, tempura shrimp, shredded fish, and clear containers of sliced vegetables and greens, plus squeeze bottles of sauce. The cook wears clear food-service gloves throughout.",
+  "steps": [
+    {
+      "n": 1,
+      "start": 0,
+      "end": 4,
+      "text": "Place and smooth the bamboo rolling mat",
+      "detail": "Gloved hands position a plastic-wrapped bamboo mat flat on the white prep board.",
+      "flags": []
+    },
+    {
+      "n": 2,
+      "start": 4,
+      "end": 8,
+      "text": "Scoop a handful of sushi rice",
+      "detail": "Both hands lift a clump of white rice from a green bowl.",
+      "flags": []
+    },
+    {
+      "n": 3,
+      "start": 8,
+      "end": 20,
+      "text": "Spread the rice evenly over the nori",
+      "detail": "Rice is placed onto a nori sheet on the mat and pressed outward into a flat layer, leaving a bare strip of nori along the far edge.",
+      "flags": []
+    },
+    {
+      "n": 4,
+      "start": 20,
+      "end": 28,
+      "text": "Lay a strip of salmon on the rice",
+      "detail": "A piece of raw salmon is set horizontally across the rice near the near edge of the nori.",
+      "flags": []
+    },
+    {
+      "n": 5,
+      "start": 28,
+      "end": 36,
+      "text": "Add vegetable fillings",
+      "detail": "The cook reaches to the ingredient containers and places green vegetable strips onto the rice beside the salmon.",
+      "flags": []
+    },
+    {
+      "n": 6,
+      "start": 36,
+      "end": 44,
+      "text": "Roll the sushi tightly in the bamboo mat",
+      "detail": "Both hands lift the near edge of the mat and roll it forward over the fillings, pressing to form a tight cylinder.",
+      "flags": []
+    },
+    {
+      "n": 7,
+      "start": 44,
+      "end": 52,
+      "text": "Set the finished roll aside and get fresh nori",
+      "detail": "The completed roll rests on the board while the cook reaches toward the upper shelf holding stacked nori sheets.",
+      "flags": []
+    },
+    {
+      "n": 8,
+      "start": 52,
+      "end": 60,
+      "text": "Start spreading rice on a new nori sheet",
+      "detail": "A fresh nori sheet is on the mat and hands begin placing and pressing a new layer of rice across it.",
+      "flags": []
+    }
+  ],
+  "afterClip": "Finish spreading rice on the second nori, add fillings, and roll it",
+  "source": {
+    "title": "Sushi",
+    "url": "/videos/sushi.mp4",
+    "siteName": "GrokEye catalog"
+  },
+  "durationSeconds": 60,
+  "generated": true,
+  "frameCount": 15
+}

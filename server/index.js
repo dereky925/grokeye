@@ -1,5 +1,6 @@
 import "dotenv/config";
 import cors from "cors";
+import crypto from "crypto";
 import express from "express";
 import fs from "fs";
 import path from "path";
@@ -32,6 +33,30 @@ mountYoutubeRoutes(app);
 mountXRoutes(app, { xaiApiKey: apiKey });
 
 const manifestPath = path.join(root, "public", "videos", "manifest.json");
+
+/**
+ * Pre-baked step scripts, one per catalog video (server/scripts/<id>.json,
+ * built by `npm run scripts:bake`). Each script's `steps` tile the whole clip
+ * with timestamp bounds, so any playhead position maps to exactly one step.
+ */
+const videoScripts = new Map();
+{
+  const dir = path.join(__dirname, "scripts");
+  if (fs.existsSync(dir)) {
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const doc = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
+        if (doc?.videoId && Array.isArray(doc.steps) && doc.steps.length) {
+          videoScripts.set(doc.videoId, doc);
+        }
+      } catch (err) {
+        console.warn(`[scripts] skipping ${file}:`, err.message);
+      }
+    }
+    console.log(`[scripts] ${videoScripts.size} step scripts loaded`);
+  }
+}
 const detectBase = process.env.DETECT_URL || "http://127.0.0.1:8790";
 let detectChild = null;
 function formatTime(seconds) {
@@ -962,6 +987,10 @@ app.post("/api/watch", async (req, res) => {
       req.body?.region && typeof req.body.region === "object"
         ? req.body.region
         : null;
+    const preCount = Math.max(
+      0,
+      Math.min(frames.length, Number(req.body?.preCount) || 0),
+    );
     const task =
       req.body?.taskContext && typeof req.body.taskContext === "object"
         ? req.body.taskContext
@@ -981,6 +1010,8 @@ app.post("/api/watch", async (req, res) => {
       'Output ONLY valid JSON with no markdown matching: {"verdict":"ok|mistake|unclear","spoken":"one or two short sentences"|null,"attention":{"text":"short label","kind":"zone","x":0,"y":0,"w":0,"h":0}|null,"confidence":0.0}',
       'Use "mistake" ONLY when the final frames clearly show a consequential error that has already happened and is visible in the pixels: a wrong part or orientation, unsafe handling, a step done out of order, something forced, dropped, or left unsecured.',
       "Never infer problems the frames cannot establish: torque, static discharge, whether a wrist strap is worn outside the frame, temperature, tightness, seating depth, or anything hidden. If correctness depends on such things, verdict is unclear and spoken is null.",
+      "CURRENT STATE COMES ONLY FROM THE FINAL FRAME. Earlier frames show how the scene got here and are often stale — a container that was empty early may have been filled since. Never describe the present state of anything (empty, full, loose, tamped, open, attached) unless that state is visible in the LAST frame. If the last frame does not resolve it, verdict is unclear and spoken is null.",
+      "Before answering 'mistake', name to yourself which single frame shows the error. If that frame is not the last one, and the last frame does not still show it, the verdict is unclear.",
       "Nitpicks, style preferences, and things the worker appears to be about to address are not mistakes. If the action still looks in progress in the last frame, verdict is unclear.",
       'spoken is required for "mistake" and must be null otherwise. It goes straight to text-to-speech: plain prose, no markdown or formatting characters, at most two short sentences. Lead with what is wrong, then the one concrete fix. Confident and calm, no apologies, no coordinates, no claims about anything outside these frames.',
       "In spoken, phrase the problem as a present-state observation of the scene. Never use any of these words: highlight, circle, outline, label, mark, point, show, find, where, how, which, open, next, previous, close, stop, play, pause, watch, skip, manual, grok.",
@@ -1004,7 +1035,10 @@ app.post("/api/watch", async (req, res) => {
       task?.goal
         ? `Earlier the worker asked: "${String(task.goal).slice(0, 200)}" and was told: "${String(task.instruction || "").slice(0, 300)}". Also judge whether that guidance was followed.`
         : "",
-      `${frames.length} frame(s) follow in chronological order. The last frame shows the scene after the worker paused. Return the watch JSON.`,
+      preCount > 0
+        ? `${frames.length} frame(s) follow in chronological order. The FIRST ${preCount} predate the action — they are BEFORE-context only, and anything they show may already be out of date. The remaining ${frames.length - preCount} cover the action, and the LAST frame is the scene after the worker paused: that frame alone defines current state.`
+        : `${frames.length} frame(s) follow in chronological order, all from the action itself. The LAST frame is the scene after the worker paused and alone defines current state.`,
+      "Return the watch JSON.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -1968,6 +2002,244 @@ function normalizeFlipReview(parsed) {
  * Physics review of a bottle flip. Takes a short burst of frames spanning the
  * attempt and explains what the rotation, release, and water did.
  */
+/** Pre-baked step script for a clip — the client reads step bounds from it. */
+app.get("/api/script/:videoId", (req, res) => {
+  const script = videoScripts.get(String(req.params.videoId || ""));
+  if (!script) {
+    return res.status(404).json({ error: "No step script for that video" });
+  }
+  res.json({ script });
+});
+
+/**
+ * "Did I do it right?" for ONE step.
+ *
+ * The client sends equispaced frames sampled across that step's authored time
+ * range; the model compares what they show against the step's own instruction
+ * text and returns a verdict. Multi-image + text in a single call is supported
+ * upstream, so the frames go directly — no image-to-text pre-pass needed.
+ */
+app.post("/api/step-review", async (req, res) => {
+  try {
+    const videoId = String(req.body?.videoId || "").trim();
+    const stepNumber = Number(req.body?.stepNumber);
+    const question = String(req.body?.question || "how did I do?").trim();
+    const frames = Array.isArray(req.body?.frames)
+      ? req.body.frames
+          .filter((f) => typeof f === "string" && f.startsWith("data:image"))
+          .slice(0, 12)
+      : [];
+
+    const script = videoScripts.get(videoId);
+    if (!script) {
+      return res.status(400).json({ error: "No step script for that video" });
+    }
+    const step =
+      script.steps.find((s) => s.n === stepNumber) ?? script.steps[0];
+    if (frames.length < 3) {
+      return res.status(400).json({ error: "Not enough frames to judge" });
+    }
+
+    // The strip is captured in the browser by seeking an offscreen <video>.
+    // That can silently degenerate — a seek that never lands gives 10 copies
+    // of one frame, an undecoded element gives blank ones — and the model
+    // will happily invent a story about whatever it is handed. Refuse to
+    // judge a strip that carries no motion, and say so loudly.
+    const digests = frames.map((f) =>
+      crypto.createHash("sha1").update(f).digest("hex").slice(0, 8),
+    );
+    const distinct = new Set(digests).size;
+    const bytes = frames.map((f) => f.length);
+    const avgKB = Math.round(bytes.reduce((a, b) => a + b, 0) / frames.length / 1024);
+    console.log(
+      `[step-review] ${videoId} step ${step.n} strip: ${frames.length} frames, ${distinct} distinct, avg ${avgKB}KB [${digests.join(" ")}]`,
+    );
+    if (process.env.SAVE_REVIEW_FRAMES === "1") {
+      const dir = path.join(root, ".data", "review-frames", `${videoId}-step${step.n}`);
+      fs.mkdirSync(dir, { recursive: true });
+      frames.forEach((f, i) => {
+        fs.writeFileSync(
+          path.join(dir, `${String(i).padStart(2, "0")}.jpg`),
+          Buffer.from(f.slice(f.indexOf(",") + 1), "base64"),
+        );
+      });
+      console.log(`[step-review] saved strip to ${dir}`);
+    }
+    if (distinct < 3) {
+      console.warn(
+        `[step-review] REFUSING: only ${distinct} distinct frames — the browser capture did not seek.`,
+      );
+      return res.json({
+        verdict: "not_visible",
+        summary: "The review frames did not capture the step.",
+        issues: [],
+        spoken: "I couldn't get a clean look at that step — try again in a moment.",
+        step: { n: step.n, start: step.start, end: step.end, text: step.text },
+        degraded: `only ${distinct} distinct frames`,
+      });
+    }
+
+    // TWO STAGES ON PURPOSE.
+    //
+    // Handing the model the step text and its known flags up front primed it
+    // to "find" the expected fault: on the espresso clip it reported a locked-
+    // in EMPTY portafilter three runs out of three, when every frame shows it
+    // full — it had conflated the knock box with the basket. Asked the same
+    // frames neutrally, it describes them correctly.
+    //
+    // So stage 1 observes with NO knowledge of what was supposed to happen,
+    // and stage 2 compares that observation against the step. Reasoning effort
+    // is high in both: this is the analysis, not a lookup.
+    const objectHint = `${step.text} ${step.detail || ""}`;
+
+    const observeSystem = [
+      "You are a precise visual observer. You describe what happens across an ordered strip of video frames.",
+      "You do NOT know what the person was supposed to be doing, and you must not guess at intent or correctness. Report only what is visible.",
+      "Return ONLY valid JSON (no markdown) matching:",
+      JSON.stringify({
+        frames: [{ i: 0, sees: "what this frame shows: where the key objects are and what state they are in" }],
+        objects: "where each relevant tool/part is across the strip, and what it contains or holds",
+        happened: "2-4 sentences: the sequence of actions, in order, that the strip shows",
+      }),
+      "Be concrete about state: full or empty, attached or loose, in-hand or docked, open or closed — but ONLY when the pixels show it. Write 'not resolvable' when they do not.",
+      "Do not confuse similar-looking things: a waste or scrap container is not the tool being worked with; a duplicate of a tool resting elsewhere is not the one in hand. Say which is which.",
+      `Scene: ${script.setting || script.task}`,
+      `Pay particular attention to: ${objectHint}`,
+      `${frames.length} frames follow in chronological order, index 0 first.`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const t0 = performance.now();
+    const callGrok = async (body) => {
+      const r = await fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        console.error("Step review error:", d);
+        throw new Error(d?.error?.message || "Step review failed");
+      }
+      return d?.choices?.[0]?.message?.content?.trim() || "";
+    };
+
+    const observedRaw = await callGrok({
+      model: "grok-4.5",
+      temperature: 0,
+      reasoning_effort: "high",
+      messages: [
+        { role: "system", content: observeSystem },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Describe these frames." },
+            ...frames.map((url) => ({
+              type: "image_url",
+              image_url: { url, detail: "high" },
+            })),
+          ],
+        },
+      ],
+    });
+    const observed = parseManualJson(observedRaw);
+    const observedText = [
+      observed?.happened ? `What happened: ${observed.happened}` : "",
+      observed?.objects ? `Object states: ${observed.objects}` : "",
+      Array.isArray(observed?.frames)
+        ? observed.frames
+            .map((f) => `  frame ${f?.i}: ${String(f?.sees || "").slice(0, 300)}`)
+            .join("\n")
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const judgeSystem = [
+      "You decide whether ONE step of a hands-on task was carried out, by comparing an independent observation of the footage against the step's instruction.",
+      "The observation was written by someone who did not know what the step was supposed to be. TREAT IT AS THE FACTS. Never assert anything it does not support, and never claim a state it calls not resolvable.",
+      "Return ONLY valid JSON (no markdown) matching:",
+      JSON.stringify({
+        expected: "one line: what the step required",
+        actual: "one line: what the observation says happened",
+        matches: true,
+        verdict: "correct | minor_issues | incorrect | not_visible",
+        issues: [{ what: "a discrepancy the observation supports", fix: "the corrective cue" }],
+        spoken: "1-2 blunt spoken sentences: the verdict, then the single most important fix",
+      }),
+      "CRITICAL: you are grading against the CORRECT PROCEDURE, not against what this person happened to do. The 'what the footage shows' line below is a record of this person's actions — it may itself be the mistake. Never treat it as the standard.",
+      "Fill in expected (from the correct procedure) and actual (from the observation) FIRST, then decide whether actual satisfies expected.",
+      "verdict: 'correct' = what the observation shows matches what the correct procedure requires at this point; 'minor_issues' = the required action happened but with a real technique problem; 'incorrect' = the required action was skipped, done out of order, or done to the wrong object; 'not_visible' = the observation cannot establish it (issues must be []).",
+      "A step done in the WRONG ORDER is 'incorrect' even though the action itself was performed. If the procedure requires something to happen first and the observation does not show it, say so and make that the fix.",
+      "The step may list known technique concerns. They are hypotheses to test against the observation — include one ONLY if the observation independently supports it. Never repeat a concern as though you saw it.",
+      "spoken goes straight to text-to-speech: plain prose, confident, no markdown, no preamble. When the verdict is 'correct', say so plainly and briefly.",
+      `Overall task: ${script.task}.`,
+      Array.isArray(script.procedure) && script.procedure.length
+        ? `THE CORRECT PROCEDURE for this task, in order:\n${script.procedure.map((p, i) => `  ${i + 1}. ${p}`).join("\n")}`
+        : "",
+      `THE STEP UNDER REVIEW — step ${step.n} of ${script.steps.length}, covering ${step.start}s-${step.end}s.`,
+      step.expected
+        ? `WHAT CORRECT PROCEDURE REQUIRES AT THIS POINT: ${step.expected}`
+        : `WHAT CORRECT PROCEDURE REQUIRES AT THIS POINT: ${step.text}`,
+      `For reference, what the footage shows this person doing here (NOT the standard): "${step.text}"${step.detail ? ` — ${step.detail}` : ""}`,
+      step.flags?.length
+        ? `Known technique concerns (hypotheses only): ${step.flags.join(" ")}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const judgedRaw = await callGrok({
+      model: "grok-4.5",
+      temperature: 0,
+      reasoning_effort: "high",
+      messages: [
+        { role: "system", content: judgeSystem },
+        {
+          role: "user",
+          content: `Independent observation of the footage for this step:\n${observedText}\n\nThe viewer asked: "${question}". Judge step ${step.n}.`,
+        },
+      ],
+    });
+    const parsed = parseManualJson(judgedRaw);
+
+    const verdicts = ["correct", "minor_issues", "incorrect", "not_visible"];
+    const out = {
+      verdict: verdicts.includes(parsed?.verdict) ? parsed.verdict : "not_visible",
+      summary: String(parsed?.actual || observed?.happened || "").trim().slice(0, 300),
+      issues: (Array.isArray(parsed?.issues) ? parsed.issues : [])
+        .map((i) => ({
+          what: String(i?.what || "").trim().slice(0, 160),
+          fix: String(i?.fix || "").trim().slice(0, 160),
+        }))
+        .filter((i) => i.what)
+        .slice(0, 4),
+      spoken: String(parsed?.spoken || "").trim().slice(0, 400),
+      step: { n: step.n, start: step.start, end: step.end, text: step.text },
+      observed: observed?.happened || "",
+      expected: String(parsed?.expected || "").trim().slice(0, 200),
+    };
+    // A 'correct' verdict must not carry complaints, and a fault must name one.
+    if (out.verdict === "correct") out.issues = [];
+    if (out.verdict === "incorrect" && !out.issues.length) {
+      out.verdict = "not_visible";
+    }
+    console.log(
+      `[step-review] ${videoId} step ${step.n} (${step.start}-${step.end}s) -> ${out.verdict} in ${Math.round(performance.now() - t0)}ms`,
+    );
+    res.json(out);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      error: err instanceof Error ? err.message : "Step review failed",
+    });
+  }
+});
+
 app.post("/api/flip", async (req, res) => {
   try {
     const question = String(req.body?.question || "how did I do").trim();

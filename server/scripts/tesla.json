@@ -1,0 +1,81 @@
+{
+  "videoId": "tesla",
+  "title": "Rear drive unit disconnect walk-through",
+  "task": "pulling a Tesla rear drive unit",
+  "setting": "A gray Tesla is raised on blue jack stands on a concrete residential driveway beside grass. The silver rear drive unit already rests on the ground with its orange high-voltage cable still routed under the car. A floor jack, scattered bolts, and removed black underbody panels sit nearby. Work focuses under the rear subframe among suspension arms, half-shafts, the hub/knuckle, damper, and electrical connectors.",
+  "steps": [
+    {
+      "n": 1,
+      "start": 0,
+      "end": 29.6,
+      "text": "Confirm the vehicle is supported and the rear drive unit is out of the car",
+      "detail": "Wide rear shots show the raised bumper, the drive unit on the driveway with the orange HV cable attached, a floor jack, blue jack stand, and loose fasteners.",
+      "flags": []
+    },
+    {
+      "n": 2,
+      "start": 29.6,
+      "end": 88.8,
+      "text": "Trace the orange high-voltage cable along the rear subframe and clear underbody covers",
+      "detail": "Under-car views show the orange HV leads and connector at the subframe, blue jack stands supporting the body, and removed black shields plus bolts on the ground.",
+      "flags": []
+    },
+    {
+      "n": 3,
+      "start": 88.8,
+      "end": 167.6,
+      "text": "Inspect rear suspension links, damper, and nearby brake and sensor lines",
+      "detail": "Close-ups pan control arms, bushings, the damper, coil spring area, hoses, and tire; a brief bumper cutaway and underbody grid shield appear as the camera repositions.",
+      "flags": []
+    },
+    {
+      "n": 4,
+      "start": 167.6,
+      "end": 207.1,
+      "text": "Locate the half-shafts and subframe mounts at the rear hub",
+      "detail": "Camera closes on Tesla-labeled suspension links, the half-shaft joint, rubber mounts, and nearby electrical plugs on the drive-unit side of the hub.",
+      "flags": []
+    },
+    {
+      "n": 5,
+      "start": 207.1,
+      "end": 246.5,
+      "text": "Release the red secondary lock and unplug the hub sensor connector",
+      "detail": "A hand works beside the damper and brake rotor, focusing on the black wheel-speed sensor connector with its red lock tab before pulling the lead free.",
+      "flags": []
+    },
+    {
+      "n": 6,
+      "start": 246.5,
+      "end": 335.3,
+      "text": "Check remaining suspension attachments around the drive-unit housing",
+      "detail": "Views return across half-shafts, the aluminum drive-unit casing, control arms, and coil spring, with a hand briefly near the spring perch amid some motion blur.",
+      "flags": []
+    },
+    {
+      "n": 7,
+      "start": 335.3,
+      "end": 374.7,
+      "text": "Inspect the upper control-arm bolt and knuckle fasteners",
+      "detail": "Close-ups show the upper bushing bolt above the coil spring and a fastener on the aluminum knuckle next to the brake rotor and tire.",
+      "flags": []
+    },
+    {
+      "n": 8,
+      "start": 374.7,
+      "end": 394.5,
+      "text": "Survey the underbody work area and staged hardware",
+      "detail": "Wide side shots under the raised rear show jack stands, the orange HV cable, removed panels, scattered bolts, and a disconnected wiring pigtail on the concrete.",
+      "flags": []
+    }
+  ],
+  "afterClip": "Complete any remaining electrical and suspension disconnects, verify high-voltage isolation and support, then fully lower free or reinstall the rear drive unit to spec.",
+  "source": {
+    "title": "Tesla Repair",
+    "url": "/videos/tesla.mp4",
+    "siteName": "GrokEye catalog"
+  },
+  "durationSeconds": 394.5,
+  "generated": true,
+  "frameCount": 40
+}

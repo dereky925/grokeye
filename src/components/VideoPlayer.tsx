@@ -76,6 +76,13 @@ import { cropSprite, fetchGhost } from "../lib/ghost";
 import GhostOverlay from "./GhostOverlay";
 import FlipReview from "./FlipReview";
 import { fetchFlipReview, selectAttemptFrames, wantsFlipReview } from "../lib/flip";
+import {
+  captureStepFrames,
+  fetchStepReview,
+  fetchVideoScript,
+  selectReviewStep,
+  wantsStepReview,
+} from "../lib/stepReview";
 import { useWorkWatcher } from "../hooks/useWorkWatcher";
 import {
   WATCH_FLUSH_GRACE_MS,
@@ -1456,6 +1463,44 @@ export default function VideoPlayer({ video, onBack }: Props) {
             }
           }
           return;
+        }
+
+        // Step correctness — "how did I do on that step?" Judges ONE step:
+        // asking in the first half of a step means the step that just
+        // finished, second half means the current one. Evidence is a strip of
+        // equispaced frames across that step's authored bounds, not the live
+        // frame. Flip mode owns its own "how did I do" above.
+        if (!flipMode && !live && wantsStepReview(heard)) {
+          const script = await fetchVideoScript(video.id);
+          if (sessionId !== sessionRef.current) return;
+          if (script) {
+            stampTurn("verify", { question: heard });
+            setUsedVision(true);
+            const step = selectReviewStep(script, turnTime);
+            const frames = await captureStepFrames(
+              video.src,
+              step.start,
+              step.end,
+            );
+            if (sessionId !== sessionRef.current) return;
+            const review = await fetchStepReview({
+              videoId: video.id,
+              stepNumber: step.n,
+              question: heard,
+              frames,
+            });
+            if (sessionId !== sessionRef.current) return;
+            const spoken =
+              review.spoken ||
+              review.summary ||
+              "I couldn't judge that step from the footage.";
+            try {
+              await playSpoken(spoken, sessionId);
+            } catch {
+              /* the reply text is already on screen */
+            }
+            return;
+          }
         }
 
         const visualSubjectHint = [heard, ...alternatives]

@@ -1,0 +1,87 @@
+{
+  "videoId": "pov-pc-build-fail",
+  "title": "Novice First PC Build",
+  "task": "installing CPU and AIO cooler on a first PC build",
+  "setting": "Home-office desk draped in a red towel holds a Gigabyte Z390 board, Intel LGA1151 CPU, Corsair 280mm AIO with ML140 fans, loose screws, manuals and bags; a gray mid-tower case and component boxes sit nearby under head-cam POV.",
+  "steps": [
+    {
+      "n": 1,
+      "start": 0,
+      "end": 3,
+      "text": "Seat the CPU in the motherboard socket",
+      "detail": "Bare hands lift the CPU from its clamshell, lower it into the open socket on the towel-mounted board, nudge it flat, and work the retention hardware.",
+      "flags": [
+        "no ESD strap",
+        "motherboard on fabric towel",
+        "fingers on the CPU heat spreader",
+        "pressing the CPU by hand instead of letting the load plate seat it"
+      ]
+    },
+    {
+      "n": 2,
+      "start": 3,
+      "end": 5.5,
+      "text": "Fit the AIO backplate behind the socket",
+      "detail": "Hands hold the Intel X-mount bracket and leaflet, then flip the board face-down onto the towel and seat the backplate over the socket holes beside a Corsair fan.",
+      "flags": [
+        "board flipped components-down onto the towel"
+      ]
+    },
+    {
+      "n": 3,
+      "start": 5.5,
+      "end": 7.5,
+      "text": "Bring the open case and AIO to the bench",
+      "detail": "Hands carry the radiator-and-pump assembly across to the open gray mid-tower case among the component boxes.",
+      "flags": []
+    },
+    {
+      "n": 4,
+      "start": 7.5,
+      "end": 10.5,
+      "text": "Connect the fan leads and screw both fans to the radiator",
+      "detail": "Hands join the keyed fan-lead connectors above the 280mm radiator, then drive screws to mount both white Corsair ML140 fans onto it.",
+      "flags": [
+        "screws left loose on the towel"
+      ]
+    },
+    {
+      "n": 5,
+      "start": 10.5,
+      "end": 12,
+      "text": "Orient the pump block and tubes",
+      "detail": "Hands grip the sleeved tubes and pump block against the case edge, turning the assembly to settle the mounting orientation.",
+      "flags": []
+    },
+    {
+      "n": 6,
+      "start": 12,
+      "end": 14.5,
+      "text": "Rummage the drawer for cables",
+      "detail": "A hand digs through a drawer of cable bins while the finished rad-and-fan assembly rests on the towel amid loose leads.",
+      "flags": [
+        "cables left tangled across the workspace"
+      ]
+    },
+    {
+      "n": 7,
+      "start": 14.5,
+      "end": 17,
+      "text": "Test-fit the AIO radiator into the case top",
+      "detail": "One hand hoists the case and its vented top frame overhead while the other dangles the pump by its tubes, aligning the radiator with the top mount.",
+      "flags": [
+        "pump dangling by its tubes",
+        "case held overhead one-handed"
+      ]
+    }
+  ],
+  "afterClip": "Mount the radiator into the case top with the fans screwed through the tray, bolt the pump block onto the CPU using the X bracket over the pre-applied paste, then install the motherboard in the case, add RAM, GPU, and PSU, and connect front-panel, fan, and pump headers before first boot.",
+  "source": {
+    "title": "POV First PC Build (novice)",
+    "url": "/videos/pov-pc-build-fail.mp4",
+    "siteName": "GrokEye catalog"
+  },
+  "durationSeconds": 17,
+  "generated": true,
+  "frameCount": 12
+}
