@@ -10,7 +10,8 @@
       "end": 4,
       "text": "Place and smooth the bamboo rolling mat",
       "detail": "Gloved hands position a plastic-wrapped bamboo mat flat on the white prep board.",
-      "flags": []
+      "flags": [],
+      "expected": "Correct: plastic-wrapped bamboo mat is properly positioned first on the prep board"
     },
     {
       "n": 2,
@@ -18,7 +19,8 @@
       "end": 8,
       "text": "Scoop a handful of sushi rice",
       "detail": "Both hands lift a clump of white rice from a green bowl.",
-      "flags": []
+      "flags": [],
+      "expected": "Nori sheet must be placed on the mat BEFORE any rice is scooped; scooping rice now is out of order"
     },
     {
       "n": 3,
@@ -26,7 +28,8 @@
       "end": 20,
       "text": "Spread the rice evenly over the nori",
       "detail": "Rice is placed onto a nori sheet on the mat and pressed outward into a flat layer, leaving a bare strip of nori along the far edge.",
-      "flags": []
+      "flags": [],
+      "expected": "For inside-out style the rice must cover the nori completely with no bare strip left; leaving a bare edge is the method for regular maki not uramaki, and the sheet must later be flipped"
     },
     {
       "n": 4,
@@ -34,7 +37,8 @@
       "end": 28,
       "text": "Lay a strip of salmon on the rice",
       "detail": "A piece of raw salmon is set horizontally across the rice near the near edge of the nori.",
-      "flags": []
+      "flags": [],
+      "expected": "Fillings must not be placed on the rice; the rice-covered nori must first be flipped so nori is up, then salmon goes on the nori"
     },
     {
       "n": 5,
@@ -42,7 +46,8 @@
       "end": 36,
       "text": "Add vegetable fillings",
       "detail": "The cook reaches to the ingredient containers and places green vegetable strips onto the rice beside the salmon.",
-      "flags": []
+      "flags": [],
+      "expected": "Vegetable fillings are added only after the flip onto the exposed nori side beside the salmon; placing them on unflipped rice is incorrect for inside-out"
     },
     {
       "n": 6,
@@ -50,7 +55,8 @@
       "end": 44,
       "text": "Roll the sushi tightly in the bamboo mat",
       "detail": "Both hands lift the near edge of the mat and roll it forward over the fillings, pressing to form a tight cylinder.",
-      "flags": []
+      "flags": [],
+      "expected": "Rolling can occur only after proper flip and fillings on nori; rolling rice-side-in with bare nori edge produces a standard roll not inside-out"
     },
     {
       "n": 7,
@@ -58,7 +64,8 @@
       "end": 52,
       "text": "Set the finished roll aside and get fresh nori",
       "detail": "The completed roll rests on the board while the cook reaches toward the upper shelf holding stacked nori sheets.",
-      "flags": []
+      "flags": [],
+      "expected": "Correct to set the finished roll aside once formed, then retrieve fresh nori"
     },
     {
       "n": 8,
@@ -66,7 +73,8 @@
       "end": 60,
       "text": "Start spreading rice on a new nori sheet",
       "detail": "A fresh nori sheet is on the mat and hands begin placing and pressing a new layer of rice across it.",
-      "flags": []
+      "flags": [],
+      "expected": "Correct to begin the next roll by placing fresh nori then spreading rice, but rice must again cover the entire sheet in preparation for flipping"
     }
   ],
   "afterClip": "Finish spreading rice on the second nori, add fillings, and roll it",
@@ -77,5 +85,15 @@
   },
   "durationSeconds": 60,
   "generated": true,
-  "frameCount": 15
+  "frameCount": 15,
+  "procedure": [
+    "Position plastic-wrapped bamboo sushi mat flat on clean prep surface",
+    "Place nori sheet shiny-side down fully on the mat",
+    "Wet gloved hands, scoop sushi rice, and spread it in an even layer covering the ENTIRE nori with no bare strip",
+    "Optionally sprinkle sesame seeds on rice",
+    "Flip the rice-covered nori so rice faces down on the mat and nori faces up",
+    "Arrange salmon strips and vegetable fillings in a horizontal line across the nori (near edge)",
+    "Lift near edge of mat and roll forward tightly over fillings, pressing to form a compact cylinder with rice outside",
+    "Transfer finished roll off the mat to the side and repeat with fresh nori as needed"
+  ]
 }

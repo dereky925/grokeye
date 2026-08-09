@@ -2002,6 +2002,9 @@ function normalizeFlipReview(parsed) {
  * Physics review of a bottle flip. Takes a short burst of frames spanning the
  * attempt and explains what the rotation, release, and water did.
  */
+/** Reasoning effort for step review. Tunable without a code change. */
+const REVIEW_EFFORT = process.env.REVIEW_EFFORT || "low";
+
 /** Pre-baked step script for a clip — the client reads step bounds from it. */
 app.get("/api/script/:videoId", (req, res) => {
   const script = videoScripts.get(String(req.params.videoId || ""));
@@ -2079,138 +2082,95 @@ app.post("/api/step-review", async (req, res) => {
       });
     }
 
-    // TWO STAGES ON PURPOSE.
+    // ONE call, but the output schema forces the model to WRITE DOWN what it
+    // sees before it is allowed to emit a verdict — which is what stopped it
+    // confabulating a locked-in "empty portafilter" from a frame of the knock
+    // box. A two-stage observe-then-judge pass was even more robust but cost
+    // 20-40s; this holds the same answers inside the latency budget.
     //
-    // Handing the model the step text and its known flags up front primed it
-    // to "find" the expected fault: on the espresso clip it reported a locked-
-    // in EMPTY portafilter three runs out of three, when every frame shows it
-    // full — it had conflated the knock box with the basket. Asked the same
-    // frames neutrally, it describes them correctly.
-    //
-    // So stage 1 observes with NO knowledge of what was supposed to happen,
-    // and stage 2 compares that observation against the step. Reasoning effort
-    // is high in both: this is the analysis, not a lookup.
-    const objectHint = `${step.text} ${step.detail || ""}`;
+    // The other half of the fix is `expected`: the steps record what the
+    // person DID, which may itself be the mistake, so the verdict is graded
+    // against the correct procedure instead.
+    const requirement =
+      step.expected ||
+      (Array.isArray(script.procedure) && script.procedure.length
+        ? `Follow correct procedure for: ${step.text}`
+        : step.text);
 
-    const observeSystem = [
-      "You are a precise visual observer. You describe what happens across an ordered strip of video frames.",
-      "You do NOT know what the person was supposed to be doing, and you must not guess at intent or correctness. Report only what is visible.",
-      "Return ONLY valid JSON (no markdown) matching:",
+    const system = [
+      "You judge whether ONE step of a hands-on task was carried out, from an ordered strip of frames covering that step.",
+      "Return ONLY valid JSON (no markdown), with the keys in exactly this order:",
       JSON.stringify({
-        frames: [{ i: 0, sees: "what this frame shows: where the key objects are and what state they are in" }],
-        objects: "where each relevant tool/part is across the strip, and what it contains or holds",
-        happened: "2-4 sentences: the sequence of actions, in order, that the strip shows",
+        seen: ["frame 0: where the key objects are and what state they are in", "frame 1: ..."],
+        actual: "one line: what the strip actually shows happening, in order",
+        expected: "one line: what correct procedure required here",
+        verdict: "correct | minor_issues | incorrect | not_visible",
+        issues: [{ what: "a discrepancy your own `seen` entries support", fix: "the corrective cue" }],
+        description: "3 to 5 short sentences for an on-screen panel: what you saw, whether it met the requirement, and the fix if not",
       }),
-      "Be concrete about state: full or empty, attached or loose, in-hand or docked, open or closed — but ONLY when the pixels show it. Write 'not resolvable' when they do not.",
-      "Do not confuse similar-looking things: a waste or scrap container is not the tool being worked with; a duplicate of a tool resting elsewhere is not the one in hand. Say which is which.",
-      `Scene: ${script.setting || script.task}`,
-      `Pay particular attention to: ${objectHint}`,
+      "FILL IN `seen` FIRST, one entry per frame, before deciding anything. Every later field must be supported by those entries — never assert a state no entry records.",
+      "Keep each `seen` entry under 12 words and `description` under 60 words. Terse output keeps the reply fast.",
+      "Be concrete about state: full or empty, loose or tamped, in-hand or docked, attached or loose. Write 'not resolvable' when the pixels do not show it.",
+      "Do not confuse similar objects: a waste or knock-out container full of used material is NOT the tool being worked with, and a duplicate tool resting elsewhere is not the one in hand.",
+      "GRADE AGAINST THE REQUIREMENT BELOW, NOT AGAINST WHAT THE PERSON DID. The 'for reference' line describes this person's actions and may itself be the mistake.",
+      "verdict: 'correct' = what you saw meets the requirement; 'minor_issues' = met, but with a real technique problem you saw; 'incorrect' = the required action was skipped, done out of order, or done to the wrong object; 'not_visible' = your entries cannot establish it (issues must be []).",
+      "An action done in the WRONG ORDER is 'incorrect' even though it was performed. If the requirement says something must happen first and you did not see it, that is the fault and the fix.",
+      "Known technique concerns are hypotheses only — include one ONLY if your own `seen` entries support it.",
+      "`description` is plain prose shown on screen: no markdown, no bullets, no frame numbers. Lead with the verdict.",
+      `Overall task: ${script.task}.`,
+      script.setting ? `Scene: ${script.setting}` : "",
+      Array.isArray(script.procedure) && script.procedure.length
+        ? `CORRECT PROCEDURE for this task, in order:\n${script.procedure.map((x, i) => `  ${i + 1}. ${x}`).join("\n")}`
+        : "",
+      `STEP ${step.n} of ${script.steps.length}, covering ${step.start}s-${step.end}s.`,
+      `THE REQUIREMENT AT THIS POINT: ${requirement}`,
+      `For reference, what this person does here (NOT the standard): "${step.text}"${step.detail ? ` — ${step.detail}` : ""}`,
+      step.flags?.length ? `Known technique concerns (hypotheses): ${step.flags.join(" ")}` : "",
       `${frames.length} frames follow in chronological order, index 0 first.`,
     ]
       .filter(Boolean)
       .join("\n");
 
     const t0 = performance.now();
-    const callGrok = async (body) => {
-      const r = await fetch("https://api.x.ai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-      const d = await r.json();
-      if (!r.ok) {
-        console.error("Step review error:", d);
-        throw new Error(d?.error?.message || "Step review failed");
-      }
-      return d?.choices?.[0]?.message?.content?.trim() || "";
-    };
-
-    const observedRaw = await callGrok({
-      model: "grok-4.5",
-      temperature: 0,
-      reasoning_effort: "high",
-      messages: [
-        { role: "system", content: observeSystem },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: "Describe these frames." },
-            ...frames.map((url) => ({
-              type: "image_url",
-              image_url: { url, detail: "high" },
-            })),
-          ],
-        },
-      ],
-    });
-    const observed = parseManualJson(observedRaw);
-    const observedText = [
-      observed?.happened ? `What happened: ${observed.happened}` : "",
-      observed?.objects ? `Object states: ${observed.objects}` : "",
-      Array.isArray(observed?.frames)
-        ? observed.frames
-            .map((f) => `  frame ${f?.i}: ${String(f?.sees || "").slice(0, 300)}`)
-            .join("\n")
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const judgeSystem = [
-      "You decide whether ONE step of a hands-on task was carried out, by comparing an independent observation of the footage against the step's instruction.",
-      "The observation was written by someone who did not know what the step was supposed to be. TREAT IT AS THE FACTS. Never assert anything it does not support, and never claim a state it calls not resolvable.",
-      "Return ONLY valid JSON (no markdown) matching:",
-      JSON.stringify({
-        expected: "one line: what the step required",
-        actual: "one line: what the observation says happened",
-        matches: true,
-        verdict: "correct | minor_issues | incorrect | not_visible",
-        issues: [{ what: "a discrepancy the observation supports", fix: "the corrective cue" }],
-        spoken: "1-2 blunt spoken sentences: the verdict, then the single most important fix",
+    const response = await fetch("https://api.x.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "grok-4.5",
+        temperature: 0,
+        reasoning_effort: REVIEW_EFFORT,
+        messages: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: `Judge step ${step.n}. Fill in \`seen\` for every frame first.` },
+              ...frames.map((url) => ({
+                type: "image_url",
+                image_url: { url, detail: "high" },
+              })),
+            ],
+          },
+        ],
       }),
-      "CRITICAL: you are grading against the CORRECT PROCEDURE, not against what this person happened to do. The 'what the footage shows' line below is a record of this person's actions — it may itself be the mistake. Never treat it as the standard.",
-      "Fill in expected (from the correct procedure) and actual (from the observation) FIRST, then decide whether actual satisfies expected.",
-      "verdict: 'correct' = what the observation shows matches what the correct procedure requires at this point; 'minor_issues' = the required action happened but with a real technique problem; 'incorrect' = the required action was skipped, done out of order, or done to the wrong object; 'not_visible' = the observation cannot establish it (issues must be []).",
-      "A step done in the WRONG ORDER is 'incorrect' even though the action itself was performed. If the procedure requires something to happen first and the observation does not show it, say so and make that the fix.",
-      "The step may list known technique concerns. They are hypotheses to test against the observation — include one ONLY if the observation independently supports it. Never repeat a concern as though you saw it.",
-      "spoken goes straight to text-to-speech: plain prose, confident, no markdown, no preamble. When the verdict is 'correct', say so plainly and briefly.",
-      `Overall task: ${script.task}.`,
-      Array.isArray(script.procedure) && script.procedure.length
-        ? `THE CORRECT PROCEDURE for this task, in order:\n${script.procedure.map((p, i) => `  ${i + 1}. ${p}`).join("\n")}`
-        : "",
-      `THE STEP UNDER REVIEW — step ${step.n} of ${script.steps.length}, covering ${step.start}s-${step.end}s.`,
-      step.expected
-        ? `WHAT CORRECT PROCEDURE REQUIRES AT THIS POINT: ${step.expected}`
-        : `WHAT CORRECT PROCEDURE REQUIRES AT THIS POINT: ${step.text}`,
-      `For reference, what the footage shows this person doing here (NOT the standard): "${step.text}"${step.detail ? ` — ${step.detail}` : ""}`,
-      step.flags?.length
-        ? `Known technique concerns (hypotheses only): ${step.flags.join(" ")}`
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const judgedRaw = await callGrok({
-      model: "grok-4.5",
-      temperature: 0,
-      reasoning_effort: "high",
-      messages: [
-        { role: "system", content: judgeSystem },
-        {
-          role: "user",
-          content: `Independent observation of the footage for this step:\n${observedText}\n\nThe viewer asked: "${question}". Judge step ${step.n}.`,
-        },
-      ],
     });
-    const parsed = parseManualJson(judgedRaw);
+    const data = await response.json();
+    if (!response.ok) {
+      console.error("Step review error:", data);
+      throw new Error(data?.error?.message || "Step review failed");
+    }
+    const parsed = parseManualJson(
+      data?.choices?.[0]?.message?.content?.trim() || "",
+    );
 
     const verdicts = ["correct", "minor_issues", "incorrect", "not_visible"];
     const out = {
       verdict: verdicts.includes(parsed?.verdict) ? parsed.verdict : "not_visible",
-      summary: String(parsed?.actual || observed?.happened || "").trim().slice(0, 300),
+      summary: String(parsed?.actual || "").trim().slice(0, 300),
+      expected: String(parsed?.expected || "").trim().slice(0, 200),
       issues: (Array.isArray(parsed?.issues) ? parsed.issues : [])
         .map((i) => ({
           what: String(i?.what || "").trim().slice(0, 160),
@@ -2218,16 +2178,11 @@ app.post("/api/step-review", async (req, res) => {
         }))
         .filter((i) => i.what)
         .slice(0, 4),
-      spoken: String(parsed?.spoken || "").trim().slice(0, 400),
+      description: String(parsed?.description || "").trim().slice(0, 600),
       step: { n: step.n, start: step.start, end: step.end, text: step.text },
-      observed: observed?.happened || "",
-      expected: String(parsed?.expected || "").trim().slice(0, 200),
     };
-    // A 'correct' verdict must not carry complaints, and a fault must name one.
     if (out.verdict === "correct") out.issues = [];
-    if (out.verdict === "incorrect" && !out.issues.length) {
-      out.verdict = "not_visible";
-    }
+    if (out.verdict === "incorrect" && !out.issues.length) out.verdict = "not_visible";
     console.log(
       `[step-review] ${videoId} step ${step.n} (${step.start}-${step.end}s) -> ${out.verdict} in ${Math.round(performance.now() - t0)}ms`,
     );

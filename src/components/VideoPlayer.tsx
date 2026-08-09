@@ -75,6 +75,7 @@ import {
 import { cropSprite, fetchGhost } from "../lib/ghost";
 import GhostOverlay from "./GhostOverlay";
 import FlipReview from "./FlipReview";
+import StepReviewPanel from "./StepReviewPanel";
 import { fetchFlipReview, selectAttemptFrames, wantsFlipReview } from "../lib/flip";
 import {
   captureStepFrames,
@@ -136,6 +137,7 @@ import XPostCard from "./XPostCard";
 import type {
   FlipReviewState,
   GhostState,
+  StepReviewState,
   GuidanceCue,
   HighlightLabel,
   HighlightLink,
@@ -332,6 +334,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
   });
   const [flipReview, setFlipReview] = useState<FlipReviewState | null>(null);
   const flipReviewRef = useRef<FlipReviewState | null>(null);
+  const [stepReview, setStepReview] = useState<StepReviewState | null>(null);
+  const stepReviewRef = useRef<StepReviewState | null>(null);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const youtubeOpenRef = useRef(false);
   const [youtubeSeek, setYoutubeSeek] = useState<{
@@ -1467,37 +1471,58 @@ export default function VideoPlayer({ video, onBack }: Props) {
 
         // Step correctness — "how did I do on that step?" Judges ONE step:
         // asking in the first half of a step means the step that just
-        // finished, second half means the current one. Evidence is a strip of
-        // equispaced frames across that step's authored bounds, not the live
-        // frame. Flip mode owns its own "how did I do" above.
+        // finished, second half means the current one. The answer is visual,
+        // not spoken: the panel shows the frames it judged plus a written
+        // verdict, so nothing goes to TTS or the voice bubble. Flip mode owns
+        // its own "how did I do" above.
         if (!flipMode && !live && wantsStepReview(heard)) {
           const script = await fetchVideoScript(video.id);
           if (sessionId !== sessionRef.current) return;
           if (script) {
             stampTurn("verify", { question: heard });
-            setUsedVision(true);
             const step = selectReviewStep(script, turnTime);
-            const frames = await captureStepFrames(
-              video.src,
-              step.start,
-              step.end,
-            );
-            if (sessionId !== sessionRef.current) return;
-            const review = await fetchStepReview({
-              videoId: video.id,
+            const opening: StepReviewState = {
+              review: null,
+              strip: [],
+              loading: true,
               stepNumber: step.n,
-              question: heard,
-              frames,
-            });
-            if (sessionId !== sessionRef.current) return;
-            const spoken =
-              review.spoken ||
-              review.summary ||
-              "I couldn't judge that step from the footage.";
+              stepText: step.text,
+              x: stepReviewRef.current?.x ?? 24,
+              y: stepReviewRef.current?.y ?? 360,
+            };
+            setStepReview(opening);
+            stepReviewRef.current = opening;
+
             try {
-              await playSpoken(spoken, sessionId);
-            } catch {
-              /* the reply text is already on screen */
+              const frames = await captureStepFrames(
+                video.src,
+                step.start,
+                step.end,
+              );
+              if (sessionId !== sessionRef.current) return;
+              const withStrip = { ...opening, strip: frames };
+              setStepReview(withStrip);
+              stepReviewRef.current = withStrip;
+
+              const review = await fetchStepReview({
+                videoId: video.id,
+                stepNumber: step.n,
+                question: heard,
+                frames,
+              });
+              if (sessionId !== sessionRef.current) return;
+              const done: StepReviewState = {
+                ...withStrip,
+                review,
+                loading: false,
+              };
+              setStepReview(done);
+              stepReviewRef.current = done;
+            } catch (err) {
+              if (sessionId !== sessionRef.current) return;
+              setStepReview(null);
+              stepReviewRef.current = null;
+              throw err;
             }
             return;
           }
@@ -2874,6 +2899,24 @@ export default function VideoPlayer({ video, onBack }: Props) {
           onClose={() => {
             setFlipReview(null);
             flipReviewRef.current = null;
+          }}
+        />
+      )}
+
+      {stepReview && (
+        <StepReviewPanel
+          state={stepReview}
+          onChangePosition={(x, y) => {
+            setStepReview((r) => {
+              if (!r) return r;
+              const next = { ...r, x, y };
+              stepReviewRef.current = next;
+              return next;
+            });
+          }}
+          onClose={() => {
+            setStepReview(null);
+            stepReviewRef.current = null;
           }}
         />
       )}

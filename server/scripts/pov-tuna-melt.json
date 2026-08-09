@@ -10,7 +10,8 @@
       "end": 16.1,
       "text": "Open the tuna, drain it, and tip it into a prep container",
       "detail": "Hands work a manual can opener on a tuna can at the board, then empty and scrape the tuna into a rectangular glass container.",
-      "flags": []
+      "flags": [],
+      "expected": "The action is correct."
     },
     {
       "n": 2,
@@ -20,7 +21,8 @@
       "detail": "Celery is pulled from the fridge, stalks are lined up and chopped into small pieces on the board, then scraped into the tuna container.",
       "flags": [
         "fingertips extended into the blade path while dicing celery"
-      ]
+      ],
+      "expected": "Celery must be diced with fingertips curled under in a proper claw grip so they stay out of the blade path; extended fingertips into the blade path is unsafe."
     },
     {
       "n": 3,
@@ -28,7 +30,8 @@
       "end": 48.4,
       "text": "Chop green onions and add them to the bowl",
       "detail": "A bunch of green onions is trimmed and sliced on the board, then scraped into the container with the tuna and celery.",
-      "flags": []
+      "flags": [],
+      "expected": "The action is correct."
     },
     {
       "n": 4,
@@ -36,7 +39,8 @@
       "end": 60.5,
       "text": "Spoon in mayonnaise and mix the tuna salad",
       "detail": "Mayonnaise is scooped from a jar into the container and stirred through until the tuna, celery, and onion are evenly coated.",
-      "flags": []
+      "flags": [],
+      "expected": "The action is correct."
     },
     {
       "n": 5,
@@ -44,7 +48,8 @@
       "end": 72.6,
       "text": "Season with pepper and hot sauce, then mix again",
       "detail": "A pepper grinder and a bottle of hot sauce are shaken over the salad and the mixture is stirred smooth, ready for assembly.",
-      "flags": []
+      "flags": [],
+      "expected": "The action is correct."
     },
     {
       "n": 6,
@@ -52,7 +57,8 @@
       "end": 88.8,
       "text": "Butter a bread slice, set it in the skillet, and top with tuna and cheese",
       "detail": "One face of a bread slice is buttered and laid in the hot pan; tuna salad is spooned on and cheese slices are laid over the filling.",
-      "flags": []
+      "flags": [],
+      "expected": "The action is correct."
     },
     {
       "n": 7,
@@ -60,7 +66,8 @@
       "end": 100.9,
       "text": "Butter the top slice, close the sandwich, and fry it",
       "detail": "The second slice is buttered and pressed on top; the melt is cooked in the skillet and turned with a spatula, then lifted out.",
-      "flags": []
+      "flags": [],
+      "expected": "The action is correct."
     },
     {
       "n": 8,
@@ -68,7 +75,8 @@
       "end": 117,
       "text": "Plate the tuna melt and cut it in half",
       "detail": "The finished sandwich is carried to the table, set on a white plate, and separated into halves for serving.",
-      "flags": []
+      "flags": [],
+      "expected": "The action is correct."
     }
   ],
   "afterClip": "Eat the plated tuna melt while it is still hot.",
@@ -79,5 +87,15 @@
   },
   "durationSeconds": 117,
   "generated": true,
-  "frameCount": 29
+  "frameCount": 29,
+  "procedure": [
+    "Open and drain the tuna into a prep container",
+    "Dice celery with safe claw grip and add to tuna",
+    "Chop green onions and add to the mixture",
+    "Add mayonnaise and mix until evenly coated",
+    "Season with pepper and hot sauce then mix again",
+    "Butter one face of a bread slice, place butter-side down in a preheated nonstick skillet, and top with tuna salad and cheese",
+    "Butter one face of the second bread slice, close the sandwich butter-side up, fry until golden, and flip once with a spatula",
+    "Plate the finished tuna melt and cut it in half"
+  ]
 }

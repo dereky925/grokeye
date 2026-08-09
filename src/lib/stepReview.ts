@@ -1,3 +1,4 @@
+import type { StepReview } from "../types";
 /**
  * Step-correctness review: "how did I do on that step?"
  *
@@ -25,16 +26,8 @@ export type VideoScript = {
   afterClip?: string;
 };
 
-export type StepReview = {
-  verdict: "correct" | "minor_issues" | "incorrect" | "not_visible";
-  summary: string;
-  issues: Array<{ what: string; fix: string }>;
-  spoken: string;
-  step: { n: number; start: number; end: number; text: string };
-};
-
-/** Frames sampled per review. Enough to show a step's arc, cheap to send. */
-export const REVIEW_FRAME_COUNT = 10;
+/** Frames sampled per review — also the strip shown in the panel. */
+export const REVIEW_FRAME_COUNT = 5;
 /** Downscale width for review frames — legibility over fidelity. */
 export const REVIEW_FRAME_WIDTH = 512;
 
