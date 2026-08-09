@@ -1859,6 +1859,13 @@ video {
   top: 54px;
 }
 
+/* Idle work-watcher chip: quiet presence so silence reads as "watching and
+   nothing is wrong", not "feature off". */
+.frame-freeze-chip.watch-idle {
+  opacity: 0.55;
+  animation: none;
+}
+
 .task-state-chip {
   position: absolute;
   top: 14px;
