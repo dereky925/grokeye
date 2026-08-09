@@ -58,6 +58,20 @@ test("visible result checks attach the current frame", () => {
     "Have I bent this enough?",
     "Is this bent correctly?",
     "Does that look properly seated?",
+    "Am I doing this right?",
+    "Did she do that right?",
+  ]) {
+    assert.equal(needsVideoContext(message), true, message);
+  }
+});
+
+test("verification asks attach the current frame without a deictic word", () => {
+  for (const message of [
+    "What did she do wrong?",
+    "Did she make a mistake?",
+    "Did I mess up?",
+    "Did she forget something?",
+    "Did I miss a step?",
   ]) {
     assert.equal(needsVideoContext(message), true, message);
   }

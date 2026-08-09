@@ -164,6 +164,11 @@ app.post("/api/chat", async (req, res) => {
     const frames = Array.isArray(req.body?.frames)
       ? req.body.frames.filter((f) => typeof f === "string" && f.startsWith("data:image"))
       : [];
+    const temporalContext = Boolean(req.body?.temporalContext) && frames.length > 1;
+    const visualSubjectHint = String(req.body?.subjectHint || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 96);
     const precomputed = Array.isArray(req.body?.detections)
       ? req.body.detections
       : null;
@@ -228,6 +233,12 @@ app.post("/api/chat", async (req, res) => {
       hasFrames
         ? "The user asked something about the video/screen. Frame(s) and playback timing are attached — commit to your best read of the frame and answer decisively. Never lead with what you can't see or can't tell. If a detail genuinely isn't in frame, coach the best expert move anyway and tuck any caveat into a few trailing words — it is never the headline."
         : "No video frame is attached for this turn. Answer decisively from general knowledge and the video title/description. Don't claim to see the screen, but don't dwell on that either — just answer.",
+      temporalContext
+        ? "The attached frames are chronological samples from at most the previous ten seconds; the final image is the speech-onset view. Use earlier images only for temporal continuity, and ground any current location or placement claim in the final image."
+        : "",
+      visualSubjectHint
+        ? `Recent grounded subject for this follow-up: ${visualSubjectHint}. Use it only to resolve a pronoun when the attached current frame remains consistent; it never authorizes stale location or geometry claims.`
+        : "",
       motionGuide && (motionGuide.note || motionGuide.label)
         ? `The UI is already showing an authored animated outline for this action (${motionGuide.note}; ${motionGuide.label}). Explicitly tell the user to follow the animated outline, then coach the physical move shown. Scene: ${motionGuide.scene || "current visible action"}.`
         : "",
@@ -271,7 +282,9 @@ app.post("/api/chat", async (req, res) => {
               ? usedLocalBoxes
                 ? `Viewer question: ${message}\nReply in spoken prose using the detector results.`
                 : `Viewer question: ${message}\nReturn JSON with reply + labels for the attached frame(s).`
-              : `Viewer question: ${message}\nAttached: ${frames.length} frame(s) from the current playback position.`,
+              : temporalContext
+                ? `Viewer question: ${message}\nAttached: ${frames.length} chronological frame(s); the last is the speech-onset view.`
+                : `Viewer question: ${message}\nAttached: ${frames.length} frame(s) from the current playback position.`,
           },
           ...frames.slice(-3).map((url) => ({
             type: "image_url",
@@ -479,6 +492,10 @@ app.post("/api/guide", async (req, res) => {
     const message = String(req.body?.message || "").trim();
     const frame = String(req.body?.frame || "");
     const videoTitle = String(req.body?.videoTitle || "").trim();
+    const subjectHint = String(req.body?.subjectHint || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 96);
     if (!message) {
       return res.status(400).json({ error: "message is required" });
     }
@@ -501,6 +518,9 @@ app.post("/api/guide", async (req, res) => {
       "If showing the motion from this frame could be unsafe or correctness depends on hidden state, return unsafe_to_show with motion null.",
       "For every non-ready status, labels may contain at most one visible attention box and motion must be null.",
       "Keep note and motion.label imperative, specific, and under 7 words.",
+      subjectHint
+        ? `Recent grounded subject for pronouns: ${subjectHint}. Treat this only as a referent hint; the current frame must still visibly confirm the object and geometry.`
+        : "",
       videoTitle ? `Video title: ${videoTitle}.` : "",
     ]
       .filter(Boolean)

@@ -432,8 +432,20 @@ export function needsVideoContext(message: string): boolean {
   if (
     refersToVisibleSubject &&
     (/\bhow\s+(?:(?:do|should|can|would)\s+i|to)\b/.test(t) ||
-      /\b(?:did|have)\s+i\b/.test(t) ||
+      /\b(?:did|have|has|am|is|was)\s+(?:i|she|he|they)\b/.test(t) ||
       /\b(?:is|are|does|do)\s+(?:this|that|it|these|those)\b/.test(t))
+  ) {
+    return true;
+  }
+
+  // Verification asks ("what did she do wrong?", "did I make a mistake?")
+  // are about the work in the current view even without a deictic word —
+  // the answer is only checkable against the frame.
+  if (
+    /\b(i|she|he|we|they)\b/.test(t) &&
+    /\b(?:(?:do(?:ne|ing)?|did|went|going)\s+(?:\w+\s+)?wrong|wrong\s+(?:with|here)|mistake|mess(?:ed|ing)?\s*up|forg(?:e|o)t(?:ting)?|miss(?:ed|ing)?\s+(?:a\s+|any\s+)?step)\b/.test(
+      t,
+    )
   ) {
     return true;
   }
@@ -553,6 +565,10 @@ export async function askGrok(input: {
   currentTime?: number;
   duration?: number;
   frames?: string[];
+  /** Frames are chronological history; the final image is speech onset. */
+  temporalContext?: boolean;
+  /** Recent grounded referent for pronouns; never trusted over the attached frame. */
+  subjectHint?: string | null;
   wantLabels?: boolean;
   lowDetail?: boolean;
   detectorPack?: string;
@@ -601,4 +617,3 @@ export async function askGrok(input: {
     frameCount: chatData.frameCount as number,
   };
 }
-
