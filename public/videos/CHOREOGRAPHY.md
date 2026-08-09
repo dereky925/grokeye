@@ -19,13 +19,17 @@ and intent meaning synchronized when either file changes.
    frame the silhouettes were traced against — and hold it there while the cue is on
    screen. Playback resumes when the cue exits. (POV camera motion inside a window is
    otherwise enough to leave a static outline hanging mid-air.)
-3. Trace the tight authored subject silhouette immediately, resolving it in about **0.2 s**.
-4. Then run the gesture in a **3.2 s** loop with distinct beats: hold the locked
-   outline on the object (~0.8 s), ease it onto the destination silhouette (~0.9 s),
-   hold there (~1.1 s), then fade out and restart — the return leg happens entirely
-   inside the faded-out tail, so the outline never visibly travels backwards. The
-   dashed destination outline stays visible throughout. No sparks or glow blobs ride
-   the motion path; the moving silhouette is the demonstration.
+3. Draw three polygons, nothing else: a **solid** outline locked on the object, a
+   **dashed** outline at the destination, and a translucent **ghost** copy of the
+   object outline. Every stroke rides a dark underlay stroke for contrast on busy
+   footage — no glow filters, gradients, or particles.
+4. The ghost never morphs between silhouettes (bezier interpolation reads as
+   wobble). It moves **rigidly** — translate, plus a uniform scale when the
+   destination silhouette is a different size — on a **2.8 s** loop: fade in on the
+   object, hold, one eased glide to the destination, hold there, fade out; the
+   return leg happens entirely while invisible. Throws of ≥ 70 px also get one
+   straight trimmed arrow from object center toward destination center; shorter
+   throws rely on the glide alone.
 5. Keep the spoken `/api/chat` request live; pass the authored cue as UI context so the
    visible reply and Carina voice explicitly tell the worker to follow the animation.
 6. When the voice response returns to `idle`, begin the same **280 ms** exit fade as the
@@ -86,13 +90,13 @@ edges; the spoken model remains responsible for any pinout/safety qualification.
 | --- | --- | --- | --- |
 | 0:00–0:06.4 | The boxed Intel Core i5-12600KF is held over the motherboard. | The carton and hands fully hide the socket, so a socket pointer here would be fabricated. | `cpu-unbox-before-placement`: trace the real carton → move it aside; “Unbox first—socket is hidden.” |
 | 0:06.4–0:54.4 | The CPU is unboxed, inspected, and the LGA1700 retention mechanism is opened. | Package, bare CPU, socket cover, lever, and contact bed appear in changing close-ups. | Live fallback; do not reuse geometry across these fast cuts. |
-| 0:54.4–0:55.45 | The bare CPU is held beside the fully exposed contact bed. | Both CPU and open socket are simultaneously visible. | `cpu-align-to-open-socket`: morph the CPU silhouette onto the socket target. |
+| 0:34–0:55.45 | The bare CPU is in hand over the board from 0:34 (rehearsed "which way does this chip go in?" ask window); beside the fully exposed contact bed by 0:54.4. | Both CPU and open socket are simultaneously visible in the traced 0:55 frame. | `cpu-align-to-open-socket`: glide the CPU silhouette onto the socket target. |
 | 0:55.45–0:57.8 | The bare CPU is held beside the open socket (silhouettes traced at 0:55.6). | Both the CPU in hand and the exposed contact bed are visible. | `cpu-lower-over-socket`: morph the CPU silhouette onto the socket target — answers "where do I put it?". |
 | 0:57.8–1:12 | Orientation marks and socket contacts are shown in close-up. | Viewpoint and scale change rapidly. | Live fallback only. |
 | 1:12–1:24 | The CPU is aligned over the socket and lowered flat. | CPU substrate directly above/inside socket; do not slide it across contacts. | `cpu-lower-into-socket`: trace CPU silhouette → lower straight down. |
 | 1:24–1:41 | The load plate and lever are closed over the seated CPU. | The CPU is already seated; retention hardware now moves. | Live fallback; do not keep replaying the lowering cue. |
 | 1:41–1:58 | The RAM kit is opened and DIMM orientation is shown. | Two elongated DIMMs and keyed contacts. | Live fallback only. |
-| 1:58–2:35 | DIMM keys are aligned with the slots and both ends are pressed until the latches seat. | Long RAM silhouette over the DIMM slots. | `ram-press-into-dimm`: trace DIMM → press evenly down. |
+| 1:42–2:35 | The RAM package is in hand from ~1:45 (rehearsed "where does this stick go?" ask window); keys aligned and pressed until the latches seat from 1:58. | Long RAM silhouette over the DIMM slots in the traced 2:20 frame. | `ram-press-into-dimm`: trace DIMM → press evenly down. |
 | 2:35–2:38 | The motherboard is shown with CPU/RAM installed. | Finished visible state. | Choreography ends; verification remains a separate live action. |
 
 Good live phrasings: “Where do I put it?”, “Where to put the CPU?”, “How do I seat
@@ -106,7 +110,7 @@ this CPU?”, and “Which way do I press this RAM?”
 | 0:28–0:36 | The graphics card is brought near the white case and the install location is established. | Card, open case, motherboard. | Live fallback only. |
 | 0:36–1:04 | Rear PCIe slot covers are loosened and removed. | Two narrow rear covers beside the motherboard slots. | `gpu-remove-slot-cover`: trace covers → lift them out. |
 | 1:04–1:28 | The GPU is oriented near the rear bracket; the viewpoint and card face change too quickly for a fixed silhouette. | Card, rear bracket, and motherboard remain live-grounded. | Live fallback only. |
-| 1:28–1:54 | The GPU rear bracket and PCIe edge are aligned, then the card is pressed level into the x16 slot. | Long edge-on card silhouette crossing the lower case opening. | `gpu-seat-card`: trace the actual card edge → move level into the slot. |
+| 1:04–1:54 | The card is in hand at the case from 1:04 (the rehearsed money-shot ask window); alignment and seating happen from 1:28. | Long edge-on card silhouette crossing the lower case opening; silhouettes traced at 1:40. | `gpu-seat-card`: trace the actual card edge → move level into the slot. |
 | 1:54–2:05 | The installed area and power-cable side are inspected. | Card is largely seated; cable visibility changes. | Cue ends; live fallback for power questions. |
 
 Good live phrasings: “How do I put this GPU in?”, “Which slot does it go into?”, and
@@ -182,7 +186,9 @@ the live `/api/chat` frame path by design.)
 - Re-sample frames after any video re-edit; timestamps and silhouettes will drift.
 - Trace `outline`/`destination` against the exact `previewAt` frame (the player snaps
   to it and holds while the cue shows, so that frame is what the outline lands on).
-- A morph `destination` must repeat its `outline`'s SVG command sequence exactly, or
-  the SMIL `d` interpolation snaps instead of gliding.
+- A `destination` silhouette no longer needs to repeat the `outline`'s SVG command
+  sequence — the renderer never interpolates `d`; it draws the destination as-is and
+  glides a rigid copy of the outline into it (translate + uniform scale from the two
+  bounding boxes).
 - Keep dangerous or hidden-state actions on the live conservative path.
 - Add every new catalog video here before claiming full catalog choreography coverage.

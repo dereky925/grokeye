@@ -130,68 +130,38 @@ export default function GuidanceMotionOverlay({
         aria-hidden
       >
         <defs>
-          <linearGradient id="guidance-flow-gradient" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stopColor="#dfffe6" stopOpacity="0.28" />
-            <stop offset="0.48" stopColor="#9dffb0" />
-            <stop offset="1" stopColor="#69f4ff" />
-          </linearGradient>
-          <filter id="guidance-glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="5" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
           <marker
             id="guidance-arrowhead"
-            markerWidth="11"
+            markerWidth="12"
             markerHeight="10"
-            refX="8.5"
+            refX="9.5"
             refY="5"
             orient="auto"
-            markerUnits="strokeWidth"
+            markerUnits="userSpaceOnUse"
           >
-            <path d="M0,0 L11,5 L0,10 Z" className="guidance-motion-arrowhead" />
+            <path d="M0,0 L12,5 L0,10 Z" className="guidance-motion-arrowhead" />
           </marker>
         </defs>
 
         <g className="guidance-pivot" transform={`translate(${pivot.x} ${pivot.y})`}>
-          <circle className="guidance-pivot-wave wave-one" r="19" />
-          <circle className="guidance-pivot-wave wave-two" r="19" />
-          <circle className="guidance-pivot-core" r="5" />
+          <circle className="guidance-pivot-core" r="4.5" />
           <line x1="-10" y1="0" x2="10" y2="0" />
           <line x1="0" y1="-10" x2="0" y2="10" />
         </g>
 
-        <path className="guidance-motion-glow" d={geometry.path} />
-        <path className="guidance-motion-rail" d={geometry.path} />
+        <path className="guidance-motion-under" d={geometry.path} />
         <path
-          className="guidance-motion-flow"
+          className="guidance-motion-rail"
           d={geometry.path}
           markerEnd="url(#guidance-arrowhead)"
         />
-
-        {[0, 1, 2].map((index) => (
-          <circle
-            key={index}
-            className={`guidance-motion-particle particle-${index + 1}`}
-            r={index === 0 ? 4.2 : 3.2}
-          >
-            <animateMotion
-              dur="1.55s"
-              begin={`${index * -0.5}s`}
-              repeatCount="indefinite"
-              path={geometry.path}
-            />
-          </circle>
-        ))}
 
         <g
           className="guidance-motion-ghost"
           transform={`translate(${geometry.end.x} ${geometry.end.y})`}
         >
-          <circle r="13" />
-          <circle r="5" />
+          <circle r="12" />
+          <circle r="4" />
         </g>
       </svg>
 

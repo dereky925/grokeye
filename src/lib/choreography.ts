@@ -30,9 +30,12 @@ export type CatalogMotionCue = {
   delta?: [number, number];
   /** Rotation applied after the outline-lock beat. */
   rotation?: { degrees: number; cx: number; cy: number };
-  /** Visible direction rail used by particles and the terminal arrow. */
+  /**
+   * Legacy curved rail — no longer rendered. The overlay draws its own straight
+   * trimmed arrow between the outline and destination centers.
+   */
   motionPath: string;
-  /** Optional interior silhouette details (fans, contacts, rice edge, etc.). */
+  /** Legacy interior details — no longer rendered (simple-polygon overlay). */
   detailPaths?: string[];
   /** Label position in the authored 1280 × 720 plane. */
   labelAt: [number, number];
@@ -150,7 +153,9 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
   {
     id: "cpu-align-to-open-socket",
     videoId: "pov-pc-build-cpu-ram",
-    start: 54.4,
+    // Ask window opens at 0:34 — the bare CPU is in hand over the board for
+    // the rehearsed 0:36–0:50 "which way does this chip go in?" ask.
+    start: 34,
     end: 55.45,
     previewAt: 55,
     scene: "The bare Intel CPU is held beside the exposed LGA1700 contact bed.",
@@ -229,7 +234,9 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
   {
     id: "ram-press-into-dimm",
     videoId: "pov-pc-build-cpu-ram",
-    start: 118,
+    // Ask window opens at 1:42 — the RAM package is in hand from ~1:45 for the
+    // rehearsed "where does this stick go?" ask.
+    start: 102,
     end: 155,
     previewAt: 140,
     scene: "DDR4 DIMMs are aligned with the keyed slots and pressed evenly until the latches click.",
@@ -243,7 +250,7 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     motionPath: "M 566 228 C 566 275 566 326 568 382",
     detailPaths: ["M 554 178 L 574 179 L 575 286", "M 556 333 L 558 411"],
     labelAt: [640, 360],
-    keywords: ["ram", "memory", "dimm", "press", "seat", "install"],
+    keywords: ["ram", "memory", "dimm", "stick", "press", "seat", "install"],
   },
   {
     id: "gpu-remove-slot-cover",
@@ -266,7 +273,10 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
   {
     id: "gpu-seat-card",
     videoId: "pov-pc-build-gpu",
-    start: 88,
+    // Ask window opens at 1:04, right after the slot covers are out — the card
+    // is in hand at the case from then on (the rehearsed 1:05–1:15 money shot).
+    // Silhouettes are traced at previewAt; the player snaps there.
+    start: 64,
     end: 114,
     previewAt: 100,
     scene: "The XFX graphics card is aligned with the PCIe x16 slot and rear bracket, then seated evenly.",
@@ -486,9 +496,12 @@ export function findCatalogChoreography(
   );
   if (!matches.length) return null;
   // Named-object placement must agree with the authored subject. Purely
-  // deictic asks ("move this") may still use the only grounded scene cue.
+  // deictic asks ("move this", "where does this connect?") may still use the
+  // only grounded scene cue — the lookahead must skip placement verbs that
+  // directly follow the pronoun, or "this go/connect/fit" reads as "this
+  // <noun>" and the deictic path never fires.
   const namedReferent =
-    /\b(?:this|that|these|those|the|my|our)\s+(?!(?:one|thing|object|part|piece|stuff|way|around|over|under|up|down|left|right|in|out|into|onto|away|here|there|clockwise|counterclockwise)\b)[a-z][\w-]*/i.test(
+    /\b(?:this|that|these|those|the|my|our)\s+(?!(?:one|thing|object|part|piece|stuff|way|around|over|under|up|down|left|right|in|out|into|onto|away|here|there|clockwise|counterclockwise|go|goes|fit|fits|sit|sits|attach|attaches|connect|connects|mount|mounts|belong|belongs|plug|plugs)\b)[a-z][\w-]*/i.test(
       message,
     );
   const deictic =
