@@ -1440,7 +1440,6 @@ video {
 }
 
 .catalog-motion-object,
-.catalog-motion-object-aura,
 .catalog-motion-detail,
 .catalog-motion-target,
 .catalog-motion-rail,
@@ -1448,16 +1447,6 @@ video {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.catalog-motion-object-aura {
-  stroke: rgba(105, 244, 255, 0.2);
-  stroke-width: 18;
-  opacity: 0.9;
-  filter: blur(7px);
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: catalog-outline-trace 0.18s cubic-bezier(0.15, 0.8, 0.2, 1) forwards;
 }
 
 .catalog-motion-object {
@@ -1486,7 +1475,7 @@ video {
   stroke-dasharray: 8 9;
   opacity: 0;
   filter: drop-shadow(0 0 5px rgba(105, 244, 255, 0.36));
-  animation: catalog-target-breathe 1.35s 0.16s ease-in-out infinite;
+  animation: catalog-target-breathe 3.2s 0.16s ease-in-out infinite;
 }
 
 .catalog-motion-rail-glow {
@@ -1510,23 +1499,6 @@ video {
 .catalog-motion-arrowhead {
   fill: #9dffb0;
   filter: drop-shadow(0 0 7px rgba(105, 244, 255, 0.95));
-}
-
-.catalog-motion-spark {
-  fill: #f4fff6;
-  stroke: rgba(105, 244, 255, 0.92);
-  stroke-width: 1.5;
-  opacity: 0;
-  filter: drop-shadow(0 0 8px rgba(105, 244, 255, 1));
-  animation: catalog-spark-in 0.1s 0.2s ease-out forwards;
-}
-
-.catalog-motion-spark.spark-2 {
-  opacity: 0.72;
-}
-
-.catalog-motion-spark.spark-3 {
-  opacity: 0.46;
 }
 
 .catalog-motion-label {
@@ -1594,16 +1566,14 @@ video {
 }
 
 @keyframes catalog-target-breathe {
-  0%,
-  5% {
-    opacity: 0;
+  0% {
+    opacity: 0.4;
   }
-  42%,
-  78% {
-    opacity: 0.92;
+  50% {
+    opacity: 0.95;
   }
   100% {
-    opacity: 0;
+    opacity: 0.4;
   }
 }
 
@@ -1616,12 +1586,6 @@ video {
 @keyframes catalog-rail-flow {
   to {
     stroke-dashoffset: -42;
-  }
-}
-
-@keyframes catalog-spark-in {
-  to {
-    opacity: 1;
   }
 }
 
@@ -1857,12 +1821,10 @@ video {
   .guidance-motion-ghost circle,
   .guidance-motion-particle,
   .catalog-motion-object,
-  .catalog-motion-object-aura,
   .catalog-motion-detail,
   .catalog-motion-target,
   .catalog-motion-rail,
   .catalog-motion-rail-glow,
-  .catalog-motion-spark,
   .catalog-motion-label-kicker i {
     animation: none;
   }
