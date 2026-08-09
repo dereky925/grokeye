@@ -378,95 +378,31 @@ export function parseManualAction(
  * For espresso/coffee guides, open on the dose/grind step (portafilter on the
  * grind machine) — never step 1 when a later dose step exists.
  */
-export const ESPRESSO_PREP_MANUAL: ManualDoc = {
-  title: "Espresso portafilter prep",
-  topic: "espresso portafilter prep",
-  mode: "steps",
-  source: {
-    title: "How to Make Espresso",
-    url: "https://home.lamarzoccousa.com/how-to-make-espresso/",
-    siteName: "home.lamarzoccousa.com",
-  },
-  steps: [
-    {
-      n: 1,
-      text: "Warm up the espresso machine and purge the group head briefly.",
-    },
-    {
-      n: 2,
-      text: "Lock the empty portafilter onto the grind machine and dose it with fresh grounds.",
-    },
-    {
-      n: 3,
-      text: "Tamp the puck flat and level with the tamper on the counter.",
-    },
-    {
-      n: 4,
-      text: "Lock the tamped portafilter fully into the group head.",
-    },
-  ],
-};
-
-/** Open on dose-at-grinder — intentionally not step 1. */
-export const ESPRESSO_MANUAL_START_INDEX = 1;
-
+/**
+ * Which step the overlay opens on: the one whose authored bounds contain the
+ * playhead, so the card matches what is on screen (and the step numbering the
+ * correctness review uses). Manuals without bounds open at the top.
+ */
 export function preferredManualStartIndex(
   doc: ManualDoc,
-  ctx?: { videoId?: string; topic?: string },
+  ctx?: { currentTime?: number },
 ): number {
   if (doc.mode === "pdf" || !doc.steps.length) return 0;
-
-  // Authored espresso checklist: always open on the dose-at-grinder step.
-  if (
-    doc.title === ESPRESSO_PREP_MANUAL.title ||
-    ctx?.videoId === "pov-espresso-tamp"
-  ) {
-    return Math.min(
-      ESPRESSO_MANUAL_START_INDEX,
-      Math.max(0, doc.steps.length - 1),
-    );
+  const t = ctx?.currentTime;
+  if (!Number.isFinite(t)) return 0;
+  const idx = doc.steps.findIndex(
+    (s) =>
+      typeof s.start === "number" &&
+      typeof s.end === "number" &&
+      (t as number) >= s.start &&
+      (t as number) < s.end,
+  );
+  if (idx >= 0) return idx;
+  const last = doc.steps[doc.steps.length - 1];
+  if (typeof last?.end === "number" && (t as number) >= last.end) {
+    return doc.steps.length - 1;
   }
-
-  const blob = `${ctx?.videoId ?? ""} ${ctx?.topic ?? ""} ${doc.topic} ${doc.title}`;
-  const espresso =
-    ctx?.videoId === "pov-espresso-tamp" ||
-    /\b(espresso|coffee|portafilter|barista|latte)\b/i.test(blob);
-  if (!espresso) return 0;
-
-  let bestIdx = 0;
-  let bestScore = 0;
-  for (let i = 0; i < doc.steps.length; i++) {
-    const t = String(doc.steps[i]?.text || "").toLowerCase();
-    let score = 0;
-    if (/\b(grind(?:er|ing)?|dose|dosing|grounds)\b/.test(t)) score += 4;
-    if (/\bportafilter\b/.test(t)) score += 2;
-    if (
-      /\b(under|into|in|to|at|on(?:to)?)\b[\s\w]{0,24}\b(grind(?:er)?|grind machine)\b/.test(
-        t,
-      ) ||
-      /\bgrind(?:er)?\b[\s\w]{0,24}\b(portafilter|basket|dose)\b/.test(t)
-    ) {
-      score += 5;
-    }
-    if (/\b(group head|lock(?:ed|ing)? in)\b/.test(t) && !/\b(grind|dose)\b/.test(t)) {
-      score -= 3;
-    }
-    if (/\btamp/.test(t) && !/\b(grind|dose)\b/.test(t)) score -= 2;
-    if (score > bestScore) {
-      bestScore = score;
-      bestIdx = i;
-    }
-  }
-  // Prefer not landing on step 1 if a later grind/dose step scored.
-  if (bestScore > 0 && bestIdx === 0) {
-    const later = doc.steps.findIndex(
-      (s, i) =>
-        i > 0 &&
-        /\b(grind|dose|portafilter)\b/i.test(String(s.text || "")),
-    );
-    if (later > 0) return later;
-  }
-  return bestScore > 0 ? bestIdx : 0;
+  return 0;
 }
 
 export function applyManualAction(
@@ -639,18 +575,6 @@ const MICKE_PDF = {
     "https://www.ikea.com/us/en/assembly_instructions/micke-desk-black-brown__AA-476633-15-100.pdf",
 };
 
-function wantsEspressoPrepManual(
-  topic: string,
-  input: { videoId?: string },
-): boolean {
-  if (input.videoId === "pov-espresso-tamp") return true;
-  const t = topic.toLowerCase();
-  return (
-    /\b(espresso|portafilter|barista)\b/.test(t) ||
-    (/\bcoffee\b/.test(t) &&
-      /\b(manual|guide|instruction|how\s+to|prep|shot)\b/.test(t))
-  );
-}
 
 function wantsIkeaPamphlet(
   topic: string,
@@ -721,43 +645,17 @@ export async function fetchManual(input: {
     });
   }
 
-  // Coffee / espresso: authored checklist — dose-at-grinder is step 2.
-  if (wantsEspressoPrepManual(topic, input)) {
-    return {
-      ...ESPRESSO_PREP_MANUAL,
-      topic: topic || ESPRESSO_PREP_MANUAL.topic,
-    };
-  }
-
-  // v2 drops manuals cached back when every guide was padded to 6 steps.
-  const cacheKey = `grokeye-manual:v2:${topic.toLowerCase()}`;
-
-  try {
-    const cached = localStorage.getItem(cacheKey);
-    if (cached) {
-      const parsed = JSON.parse(cached) as ManualDoc;
-      if (parsed?.steps?.length && parsed?.source?.url) return parsed;
-    }
-  } catch {
-    /* ignore bad cache */
-  }
-
+  // Steps are pre-baked per clip and served by /api/manual, so there is
+  // nothing to cache and nothing to generate. A cached web manual must never
+  // shadow the authored steps the review grades against.
   const res = await fetch("/api/manual", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Failed to generate manual");
-  const manual = data.manual as ManualDoc;
-
-  try {
-    localStorage.setItem(cacheKey, JSON.stringify(manual));
-  } catch {
-    /* quota / private mode */
-  }
-
-  return manual;
+  if (!res.ok) throw new Error(data.error || "No steps for this video");
+  return data.manual as ManualDoc;
 }
 
 export async function speakText(text: string): Promise<string> {

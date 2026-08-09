@@ -1751,8 +1751,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
             }
             const result = applyManualAction(manualRef.current, action, doc, {
               startIndex: preferredManualStartIndex(doc, {
-                videoId: video.id,
-                topic,
+                currentTime: el?.currentTime ?? turnTime,
               }),
             });
             setManual(result.state);
@@ -1763,13 +1762,8 @@ export default function VideoPlayer({ video, onBack }: Props) {
                   result.state.doc.steps[result.state.stepIndex]?.text,
               });
             }
-            if (result.speak) {
-              try {
-                await playSpoken(result.speak, sessionId);
-              } catch {
-                /* overlay and visible reply already updated */
-              }
-            }
+            // Panel-only: the steps window IS the response. Nothing spoken,
+            // nothing in the centre-bottom bubble — straight back to listening.
             return;
           }
 
@@ -1787,14 +1781,7 @@ export default function VideoPlayer({ video, onBack }: Props) {
                 result.state.doc.steps[result.state.stepIndex]?.text,
             });
           }
-          // Read steps aloud; keep panel moves silent.
-          if (result.speak && action.type !== "move_overlay") {
-            try {
-              await playSpoken(result.speak, sessionId);
-            } catch {
-              /* overlay and visible reply already updated */
-            }
-          }
+          // Panel-only for step navigation and panel moves too.
           return;
         }
 
