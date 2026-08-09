@@ -324,28 +324,65 @@ app.post("/api/chat", async (req, res) => {
 
     const model = "grok-4.5";
 
-    const response = await fetch("https://api.x.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        temperature: labelMode ? 0.2 : 0.5,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: userContent },
-        ],
-      }),
+    // Authored-animation turns want the voice on screen fast: the animation
+    // is already playing and the spoken line is a one-liner coaching the
+    // user to follow it. Low reasoning effort + a hedged duplicate call
+    // (same trick as /api/verify) cut the worst-case wait; the reply itself
+    // stays fully live.
+    const fastMotionTurn = Boolean(motionGuide);
+    const body = JSON.stringify({
+      model,
+      temperature: labelMode ? 0.2 : 0.5,
+      ...(fastMotionTurn ? { reasoning_effort: "low" } : {}),
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: userContent },
+      ],
     });
-
-    const data = await response.json();
-    if (!response.ok) {
-      console.error("Chat error:", data);
-      return res.status(response.status).json({
-        error: data?.error?.message || "Chat request failed",
+    const chatCall = () =>
+      fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body,
       });
+
+    let response;
+    let data;
+    if (fastMotionTurn) {
+      const attempt = async () => {
+        const r = await chatCall();
+        const d = await r.json();
+        if (!r.ok) {
+          throw Object.assign(
+            new Error(d?.error?.message || "Chat request failed"),
+            { status: r.status, data: d },
+          );
+        }
+        return { r, d };
+      };
+      try {
+        const winner = await Promise.any([attempt(), attempt()]);
+        response = winner.r;
+        data = winner.d;
+      } catch (err) {
+        const failure = err?.errors?.[0] ?? err;
+        console.error("Chat error:", failure?.data ?? failure);
+        return res.status(failure?.status || 500).json({
+          error: failure?.message || "Chat request failed",
+        });
+      }
+    } else {
+      response = await chatCall();
+      data = await response.json();
+      if (!response.ok) {
+        console.error("Chat error:", data);
+        return res.status(response.status).json({
+          error: data?.error?.message || "Chat request failed",
+        });
+      }
     }
 
     const raw =
@@ -1331,18 +1368,33 @@ app.post("/api/tts", async (req, res) => {
       return res.status(400).json({ error: "text is required" });
     }
 
-    const response = await fetch("https://api.x.ai/v1/tts", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text,
-        voice_id: "carina",
-        language: "en",
-      }),
-    });
+    const speak = () =>
+      fetch("https://api.x.ai/v1/tts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text,
+          voice_id: "carina",
+          language: "en",
+        }),
+      });
+
+    // One retry on transient upstream failures — a dropped voice line
+    // mid-demo is worse than ~300ms of extra latency.
+    let response = await speak().catch(() => null);
+    if (!response || !response.ok) {
+      if (response) {
+        console.error(
+          `TTS upstream ${response.status} — retrying once:`,
+          await response.text().catch(() => ""),
+        );
+      }
+      await new Promise((r) => setTimeout(r, 250));
+      response = await speak();
+    }
 
     if (!response.ok) {
       const errText = await response.text();

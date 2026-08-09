@@ -60,6 +60,62 @@ type Props = {
   persistent?: boolean;
 };
 
+/**
+ * Curved connection geometry: a lifted cubic Bézier that departs the source
+ * along the center line, rises, then descends into the target — reads as
+ * "pick it up and seat it there" instead of a flat pointer. Presentation
+ * only; the tracker still deals exclusively in axis-aligned boxes.
+ */
+function connectionGeometry(
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  planeH: number,
+) {
+  const dx = p2.x - p1.x;
+  const dy = p2.y - p1.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const ux = dx / dist;
+  const uy = dy / dist;
+  // Perpendicular pointing toward the top of the frame.
+  let nx = -uy;
+  let ny = ux;
+  if (ny > 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  let lift = Math.min(72, Math.max(22, dist * 0.3));
+  // Keep the apex on the picture: shrink the bow near the top edge; if there
+  // is no headroom left, flip the bow downward instead.
+  const midY = (p1.y + p2.y) / 2;
+  const apexY = midY + ny * lift;
+  if (apexY < 12) {
+    lift -= 12 - apexY;
+    if (lift < 16) {
+      nx = -nx;
+      ny = -ny;
+      lift = Math.min(52, Math.max(16, planeH - 12 - midY));
+    }
+  }
+  const c1x = p1.x + ux * dist * 0.3 + nx * lift;
+  const c1y = p1.y + uy * dist * 0.3 + ny * lift;
+  const c2x = p2.x - ux * dist * 0.22 + nx * lift * 0.85;
+  const c2y = p2.y - uy * dist * 0.22 + ny * lift * 0.85;
+  return {
+    p1,
+    p2,
+    d: `M ${p1.x} ${p1.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p2.x} ${p2.y}`,
+    headAngle: (Math.atan2(p2.y - c2y, p2.x - c2x) * 180) / Math.PI,
+  };
+}
+
+/** Energy packets streaming along the connection rail (staggered phases). */
+const COMETS = [
+  { dur: 1.45, begin: -0.3, r: 2.8, tail: 10 },
+  { dur: 1.7, begin: -0.95, r: 2.1, tail: 8 },
+  { dur: 1.55, begin: -1.45, r: 2.5, tail: 9 },
+  { dur: 1.9, begin: -0.6, r: 1.8, tail: 6.5 },
+];
+
 /** Point where the center-to-center line exits `box`, plus a small gap. */
 function arrowEndpoint(
   box: HighlightLabel,
@@ -304,10 +360,15 @@ export default function VideoHighlights({
     const dx = (to.x + to.w / 2 - (from.x + from.w / 2)) * content.width;
     const dy = (to.y + to.h / 2 - (from.y + from.h / 2)) * content.height;
     const p1 = arrowEndpoint(from, dx, dy, content.width, content.height, 6);
-    const p2 = arrowEndpoint(to, -dx, -dy, content.width, content.height, 10);
+    const p2 = arrowEndpoint(to, -dx, -dy, content.width, content.height, 9);
     // Boxes overlap or touch — no room for a readable arrow.
     if (Math.hypot(p2.x - p1.x, p2.y - p1.y) < 24) return [];
-    return [{ id: `${link.fromId}-${link.toId}`, p1, p2 }];
+    return [
+      {
+        id: `${link.fromId}-${link.toId}`,
+        ...connectionGeometry(p1, p2, content.height),
+      },
+    ];
   });
 
   return (
@@ -384,35 +445,101 @@ export default function VideoHighlights({
             viewBox={`0 0 ${content.width} ${content.height}`}
           >
             <defs>
-              <marker
-                id="hl-arrowhead"
-                markerWidth="7"
-                markerHeight="6"
-                refX="5.5"
-                refY="3"
-                orient="auto"
-                markerUnits="strokeWidth"
-              >
-                <path d="M0,0 L7,3 L0,6 Z" className="video-highlight-arrowhead" />
-              </marker>
+              <filter id="hl-conn-blur" x="-40%" y="-40%" width="180%" height="180%">
+                <feGaussianBlur stdDeviation="3.2" />
+              </filter>
+              <linearGradient id="hl-conn-comet-grad" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stopColor="#9dffb0" stopOpacity="0" />
+                <stop offset="0.55" stopColor="#9dffb0" stopOpacity="0.45" />
+                <stop offset="1" stopColor="#eafff0" stopOpacity="0.95" />
+              </linearGradient>
+              <radialGradient id="hl-conn-pool-grad">
+                <stop offset="0" stopColor="#9dffb0" stopOpacity="0.5" />
+                <stop offset="1" stopColor="#9dffb0" stopOpacity="0" />
+              </radialGradient>
             </defs>
             {arrows.map((a) => (
               <g key={a.id}>
-                <line
-                  className="video-highlight-arrow-glow"
+                <linearGradient
+                  id={`hl-conn-grad-${a.id}`}
+                  gradientUnits="userSpaceOnUse"
                   x1={a.p1.x}
                   y1={a.p1.y}
                   x2={a.p2.x}
                   y2={a.p2.y}
+                >
+                  <stop offset="0" stopColor="#f5f8ff" stopOpacity="0.9" />
+                  <stop offset="1" stopColor="#9dffb0" />
+                </linearGradient>
+                <path className="hl-conn-under" d={a.d} pathLength={1} />
+                <path
+                  className="hl-conn-glow"
+                  d={a.d}
+                  pathLength={1}
+                  filter="url(#hl-conn-blur)"
                 />
-                <line
-                  className="video-highlight-arrow"
-                  x1={a.p1.x}
-                  y1={a.p1.y}
-                  x2={a.p2.x}
-                  y2={a.p2.y}
-                  markerEnd="url(#hl-arrowhead)"
+                <path
+                  id={`hl-conn-rail-${a.id}`}
+                  className="hl-conn-core"
+                  d={a.d}
+                  pathLength={1}
+                  stroke={`url(#hl-conn-grad-${a.id})`}
                 />
+                <path className="hl-conn-flow" d={a.d} pathLength={1} />
+                <g
+                  transform={`translate(${a.p2.x} ${a.p2.y}) rotate(${a.headAngle})`}
+                >
+                  <path
+                    className="hl-conn-head"
+                    d="M3,0 L-14,-6.8 L-9.5,0 L-14,6.8 Z"
+                  />
+                </g>
+                <g transform={`translate(${a.p2.x} ${a.p2.y})`}>
+                  <circle
+                    className="hl-conn-pool"
+                    r="14"
+                    fill="url(#hl-conn-pool-grad)"
+                  />
+                  <circle className="hl-conn-ripple" />
+                  <circle className="hl-conn-ripple r2" />
+                </g>
+                <g className="hl-conn-comets">
+                  {COMETS.map((c, i) => (
+                    <g key={i}>
+                      <ellipse
+                        cx={-c.tail * 0.62}
+                        rx={c.tail}
+                        ry={c.r * 0.75}
+                        fill="url(#hl-conn-comet-grad)"
+                      />
+                      <circle
+                        className="hl-conn-comet-head"
+                        r={c.r}
+                        fill="#eafff0"
+                      />
+                      <animateMotion
+                        dur={`${c.dur}s`}
+                        begin={`${c.begin}s`}
+                        repeatCount="indefinite"
+                        rotate="auto"
+                        calcMode="spline"
+                        keyPoints="0;1"
+                        keyTimes="0;1"
+                        keySplines="0.3 0.08 0.35 1"
+                      >
+                        <mpath href={`#hl-conn-rail-${a.id}`} />
+                      </animateMotion>
+                      <animate
+                        attributeName="opacity"
+                        values="0;1;1;0"
+                        keyTimes="0;0.1;0.82;1"
+                        dur={`${c.dur}s`}
+                        begin={`${c.begin}s`}
+                        repeatCount="indefinite"
+                      />
+                    </g>
+                  ))}
+                </g>
               </g>
             ))}
           </svg>

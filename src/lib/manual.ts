@@ -157,13 +157,20 @@ export function extractTopic(message: string): string | undefined {
 
   // "the manual for X" / "a guide on X" — the subject follows the preposition.
   const scoped = s.match(
-    /\b(?:manual|guide|instructions?|recipe|steps?)\b.*?\b(?:for|on|about)\s+(.+)$/,
+    /\b(?:manual|guide|instructions?|recipe|steps?|pdf|pamphlet|booklet)\b.*?\b(?:for|on|about)\s+(.+)$/,
   );
   if (scoped) {
     s = scoped[1];
   } else {
     s = s
-      .replace(/^(?:hey|ok|okay)\s+\w+[\s,]*/, "")
+      // Politeness shell, one filler token at a time — "okay can you pull up
+      // the manual" must not have "okay <word>" swallow the "can" that the
+      // next strip needs ("Finding a guide: you pull up the" was real).
+      .replace(
+        /^(?:(?:okay|ok|alright|hey|hi|yo|so|um|uh|well|now|please|grok)[\s,]+)+/,
+        "",
+      )
+      .replace(/^(?:can|could|would|will)\s+you\s+(?:please\s+)?/, "")
       .replace(/\b(?:can|could|would)\s+you\s+/g, "")
       .replace(
         /^.*?\b(?:how\s+(?:do|does|can|would)\s+(?:i|you|we|one|it)|how\s+to|walk\s+me\s+through|talk\s+me\s+through|teach\s+me(?:\s+how)?(?:\s+to)?|guide\s+me(?:\s+through)?|show\s+me\s+how(?:\s+to)?|help\s+me|steps?\s+(?:for|to)|instructions?\s+(?:for|to))\s+/,
@@ -173,7 +180,7 @@ export function extractTopic(message: string): string | undefined {
     // Peel off the command shell around a named document: "show me the sushi
     // manual" -> "sushi". Guarded so it can't eat the verb in a real request
     // like "open this water bottle".
-    if (/\b(?:manual|guide|instructions?|recipe|steps?)\b/.test(s)) {
+    if (/\b(?:manual|guide|instructions?|recipe|steps?|pdf|pamphlet|booklet)\b/.test(s)) {
       s = s
         .replace(
           /^(?:open|show|pull\s+up|start|bring\s+up|get|give\s+me|read)\s+(?:me\s+)?/,
@@ -181,7 +188,7 @@ export function extractTopic(message: string): string | undefined {
         )
         // Trailing forgetfulness: "...manual i forgot the next step"
         .replace(
-          /\s*\b(?:manual|guide|instructions?|recipe|steps?)\b(?:\s*,?\s*(?:i\s+)?(?:forgot|forget|don't remember|do not remember|cant remember|can't remember).*)?$/i,
+          /\s*\b(?:manual|guide|instructions?|recipe|steps?|pdf|pamphlet|booklet)\b(?:\s*,?\s*(?:i\s+)?(?:forgot|forget|don't remember|do not remember|cant remember|can't remember).*)?$/i,
           "",
         )
         .replace(
@@ -207,6 +214,15 @@ export function extractTopic(message: string): string | undefined {
   if (PRONOUN_ONLY_RE.test(s)) return undefined;
   if (BARE_VERB_RE.test(s)) return undefined;
   if (!/[a-z]/.test(s)) return undefined;
+  // Command-shell residue with no content noun is not a topic — searching the
+  // web for "you pull up the" helps no one.
+  if (
+    /^(?:(?:you|your|me|my|us|our|the|a|an|it|please|up|down|out|for|to)\s*)+$/.test(
+      s,
+    )
+  ) {
+    return undefined;
+  }
   return s.slice(0, 90);
 }
 
@@ -258,7 +274,7 @@ function topicFromUtterance(t: string): string | undefined {
   if (/\bikea\b/.test(t)) return "IKEA MICKE desk";
   if (
     /\bdesk\b/.test(t) &&
-    /\b(manual|guide|instructions?|assembly|assemble)\b/.test(t)
+    /\b(manual|guide|instructions?|assembly|assemble|pdf|pamphlet|booklet)\b/.test(t)
   ) {
     return "IKEA MICKE desk";
   }
@@ -279,7 +295,7 @@ export function parseManualAction(
 
   if (
     /\b(close|dismiss|hide|put away)\b/.test(t) &&
-    /\b(manual|guide|instructions?|recipe|overlay|steps?|pages?)\b/.test(t)
+    /\b(manual|guide|instructions?|recipe|overlay|steps?|pages?|pdf|pamphlet|booklet)\b/.test(t)
   ) {
     return { type: "close_manual" };
   }
@@ -292,7 +308,9 @@ export function parseManualAction(
   const openVerb =
     /\b(open|show|pull up|start|bring up|get|give me|read)\b/.test(t);
   const namesDoc =
-    /\b(manual|guide|instructions?|recipe|assembly)\b/.test(t);
+    /\b(manual|guide|instructions?|recipe|assembly|pdf|pamphlet|booklet)\b/.test(
+      t,
+    );
   const nextPrevStepOnly =
     /\b(next|previous|prev|continue|go on|proceed|flip)\b/.test(t) &&
     !namesDoc;
@@ -307,7 +325,7 @@ export function parseManualAction(
   // Bare "sushi manual" / "ikea manual" / "desk manual" / "coffee manual"
   if (
     /\b(sushi|ikea|desk|coffee|espresso)\b/.test(t) &&
-    /\b(manual|guide|recipe|instructions?|assembly)\b/.test(t)
+    /\b(manual|guide|recipe|instructions?|assembly|pdf|pamphlet|booklet)\b/.test(t)
   ) {
     return {
       type: "open_manual",
@@ -337,8 +355,18 @@ export function parseManualAction(
 
   if (!manualOpen) return null;
 
+  // A numbered target wins over the bare flip/turn verbs — "turn to page 10"
+  // must jump, not advance one page.
+  const goto = t.match(
+    /\b(?:go to|goto|jump to|skip to|show(?: me)?|read|flip to|turn to)?\s*(?:step|page)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
+  );
+  if (goto) {
+    const step = parseStepNum(goto[1]);
+    if (step) return { type: "goto_step", step };
+  }
+
   if (
-    /\b(next(?:\s+(step|page))?|continue|go on|proceed|keep going|what'?s next|what is next|next one|skip ahead|flip(?:\s+(the\s+)?page)?|turn(?:\s+(the\s+)?page)?)\b/.test(
+    /\b(next(?:\s+(step|page))?|continue|go on|proceed|keep going|what'?s next|what is next|next one|skip ahead|flip(?!\s+back)(?:\s+(the\s+)?page)?|turn(?!\s+back)(?:\s+(the\s+)?page)?)\b/.test(
       t,
     ) ||
     /^(next|flip)[.!?]?$/.test(t)
@@ -355,14 +383,6 @@ export function parseManualAction(
     return { type: "prev_step" };
   }
 
-  const goto = t.match(
-    /\b(?:go to|goto|jump to|skip to|show(?: me)?|read|flip to)?\s*(?:step|page)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/,
-  );
-  if (goto) {
-    const step = parseStepNum(goto[1]);
-    if (step) return { type: "goto_step", step };
-  }
-
   if (
     /\b(read(?:\s+it)?|repeat|say(?:\s+it)?\s+again|what(?:'s| is) (?:this|the) (?:step|page)|current step)\b/.test(
       t,
@@ -372,6 +392,17 @@ export function parseManualAction(
   }
 
   return null;
+}
+
+/**
+ * Default x for a freshly opened manual: flush against the right edge (panel
+ * widths mirror ManualOverlay's drag bounds). Falls back to the old left-side
+ * default outside a browser (pure routing tests).
+ */
+export function defaultManualX(isPdf: boolean): number {
+  if (typeof window === "undefined") return 24;
+  const panelW = isPdf ? 440 : 280;
+  return Math.max(16, window.innerWidth - panelW - 16);
 }
 
 /**
@@ -427,7 +458,9 @@ export function applyManualAction(
       const next: ManualOverlayState = {
         doc,
         stepIndex,
-        x: state?.x ?? 24,
+        // Fresh manuals open on the right so the video (and any highlight /
+        // motion animation) stays clear on the left.
+        x: state?.x ?? defaultManualX(doc.mode === "pdf"),
         y: state?.y ?? 96,
       };
       const step = doc.steps[stepIndex];
@@ -585,8 +618,8 @@ function wantsIkeaPamphlet(
   const t = topic.toLowerCase();
   return (
     /\b(ikea|micke)\b/.test(t) ||
-    (/\bdesk\b/.test(t) &&
-      /\b(manual|assembly|assemble|instructions?)\b/.test(t))
+    (/\b(desk|furniture)\b/.test(t) &&
+      /\b(manual|assembly|assemble|instructions?|pdf|pamphlet|booklet)\b/.test(t))
   );
 }
 

@@ -38,6 +38,21 @@ and intent meaning synchronized when either file changes.
 7. If no authored window matches, use the conservative frame-grounded `/api/guide`
    fallback. Never stretch a cue into another scene.
 
+**Hero-cue exception.** Two rehearsed money-shot cues break rule 3's plain-polygon
+restriction on purpose (every other cue keeps it):
+
+- `gpu-seat-card` — "press" hero: trace draw-on, glass ghost with card details,
+  10% overshoot + latch-click flash, sheen sweep. 3.2 s / 0.5 s-delay clock.
+- `ikea-place-leg-frame` — "arc" hero: soft vignette, trace draw-on, a curved
+  conduit rail (same visual language as the tracked connection arrows: dark
+  underlay, mint glow, white→mint gradient core, comet packets, arrowhead pop)
+  anchored at the leg's held tip, plus a glass ghost that lifts, arcs (rigid
+  translate + uniform scale + ≤8° pivot at the apex — still never a bezier
+  morph), and seats onto the free end with a latch flash, light pool, and
+  impact rings. Landing-pad fill brightens just before the seat beat. All
+  layers share a 3.6 s / 0.6 s-delay clock. Rendered by the `arcHero` branch in
+  `CatalogMotionOverlay`; styles under `catalog-arc-*` in `global.css`.
+
 All runtime coordinates use a 1280 × 720 authoring plane. The overlay is scaled into
 the existing letterbox-aware video-content rectangle.
 
@@ -110,7 +125,8 @@ this CPU?”, and “Which way do I press this RAM?”
 | 0:28–0:36 | The graphics card is brought near the white case and the install location is established. | Card, open case, motherboard. | Live fallback only. |
 | 0:36–1:04 | Rear PCIe slot covers are loosened and removed. | Two narrow rear covers beside the motherboard slots. | `gpu-remove-slot-cover`: trace covers → lift them out. |
 | 1:04–1:28 | The GPU is oriented near the rear bracket; the viewpoint and card face change too quickly for a fixed silhouette. | Card, rear bracket, and motherboard remain live-grounded. | Live fallback only. |
-| 1:04–1:54 | The card is in hand at the case from 1:04 (the rehearsed money-shot ask window); alignment and seating happen from 1:28. | Long edge-on card silhouette crossing the lower case opening; silhouettes traced at 1:40. | `gpu-seat-card`: trace the actual card edge → move level into the slot. |
+| 1:04–1:36 | The card is in hand at the case from 1:04; held fan-side to camera at the case around 1:31 (the rehearsed money-shot ask). | Fan-side card silhouette with three fan rings + hubs; silhouettes traced at 1:31.5 so the previewAt snap from a ~1:31 ask is imperceptible. | `gpu-seat-card`: trace the held card → lower/shrink onto the slot band. |
+| 1:36–1:54 | Alignment and seating happen from 1:28; edge-on from ~1:38. | Long edge-on card silhouette crossing the lower case opening; silhouettes traced at 1:40. | `gpu-seat-card-late`: trace the actual card edge → move level into the slot. |
 | 1:54–2:05 | The installed area and power-cable side are inspected. | Card is largely seated; cable visibility changes. | Cue ends; live fallback for power questions. |
 
 Good live phrasings: “How do I put this GPU in?”, “Which slot does it go into?”, and
@@ -152,8 +168,8 @@ Good live phrasing in the authored window: “How do I unplug this connector?”
 
 | Time | What is actually happening | Visible anchors / caution | Authored cue |
 | --- | --- | --- | --- |
-| 0:00–0:04.8 | White MICKE end frames and the upside-down desktop are established. | One end frame is already installed; the second is picked up. | Live fallback while the loose frame enters view. |
-| 0:04.8–0:08.15 | The second rectangular end/leg frame is held nearly edge-on beside the desktop's free short end. | Holed mounting rail and the matching free-end seam are both visible. | `ikea-place-leg-frame`: trace the held frame → pivot its holed rail onto the free end. |
+| 0:00–0:04.3 | White MICKE end frames and the upside-down desktop are established. | One end frame is already installed; the second is picked up. | Live fallback while the loose frame enters view. |
+| 0:04.3–0:08.15 | The second rectangular end/leg frame is held nearly edge-on beside the desktop's free short end (in hand from ~0:04.3; the rehearsed ask lands ~0:04.8–0:05.2). | Holed mounting rail and the matching free-end seam are both visible; the player snaps to the traced 0:06 frame. | `ikea-place-leg-frame`: trace the held frame → pivot its holed rail onto the free end. **Hero cue** — see the rendering-contract exception below. Label sits at [700, 472], on the desktop wood clear of the right-docked pamphlet. |
 | 0:08.15–0:15 | The loose end frame rotates rapidly toward the near edge. | Camera and silhouette change too quickly for the 0:06 authored path. | Live `/api/guide` fallback only. |
 | 0:15–0:29 | The second end/leg frame is aligned and seated on the free short end. | Its white mounting rail runs diagonally across the lower POV frame. | `ikea-seat-leg-frame`: trace the mounting rail → seat the end frame square/flush. |
 | 0:29–0:40 | The frame is repositioned around the desktop panel. | Assembly orientation changes. | Live fallback only. |

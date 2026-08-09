@@ -4,6 +4,8 @@ import { after, before, test } from "node:test";
 import { createServer } from "vite";
 
 let vite;
+let extractTopic;
+let parseManualAction;
 let needsVideoContext;
 let needsWebSearch;
 let wantsMotionGuidance;
@@ -29,6 +31,9 @@ before(async () => {
     "/src/lib/guidance.ts",
   ));
   ({ parseToolsAction } = await vite.ssrLoadModule("/src/lib/tools.ts"));
+  ({ extractTopic, parseManualAction } = await vite.ssrLoadModule(
+    "/src/lib/manual.ts",
+  ));
   ({ wantsHighlight } = await vite.ssrLoadModule("/src/lib/highlights.ts"));
   ({ resolveInstructionRoute } = await vite.ssrLoadModule(
     "/src/lib/instructionRouting.ts",
@@ -142,6 +147,10 @@ test("visible part-placement questions trigger motion guidance", () => {
   for (const message of [
     "Where do I put it?",
     "Where to put it?",
+    "Where to put?",
+    "Where do I put?",
+    "Where do you put this?",
+    "Where would you put this?",
     "Where should I place it?",
     "Where do I put the CPU?",
     "Where to build the leg?",
@@ -183,6 +192,9 @@ test("IKEA leg placement resolves to the authored scene at speech onset", () => 
   for (const message of [
     "Where do I put it?",
     "Where to put it?",
+    "Where to put?",
+    "Where do I put?",
+    "Where do you put this?",
     "Where to build the leg?",
     "Where do I put this leg?",
     "Where should I place the leg?",
@@ -318,6 +330,31 @@ test("general procedures and existing manual controls stay manual", () => {
   });
   assert.equal(next?.kind, "manual");
   assert.equal(next?.action.type, "next_step");
+});
+
+test("polite manual asks name no topic — the bundled pamphlet must win", () => {
+  // Regression: "okay can you pull up the manual" once extracted the topic
+  // "you pull up the" and web-searched it instead of opening the MICKE PDF.
+  for (const message of [
+    "okay can you pull up the manual",
+    "hey grok can you pull up the manual",
+    "could you please pull up the manual",
+    "please open the manual",
+    "pull up the manual",
+  ]) {
+    assert.equal(extractTopic(message), undefined, message);
+    const action = parseManualAction(message, false);
+    assert.equal(action?.type, "open_manual", message);
+    assert.equal(action?.topic, undefined, message);
+  }
+  // A named subject still comes through the same shell.
+  assert.equal(
+    extractTopic("okay can you show me the sushi manual"),
+    "sushi",
+  );
+  assert.equal(parseManualAction("show me the sushi manual", false)?.topic, "sushi");
+  // The verb-eating guard still holds for real objects.
+  assert.equal(extractTopic("open this water bottle"), "open a water bottle");
 });
 
 test("toolkit questions open the tools dropdown", () => {

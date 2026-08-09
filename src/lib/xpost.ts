@@ -1,7 +1,9 @@
 /**
  * "Ask X" escalation: when the session audit can't verify an action, the user
  * approves (one tap or "post it") a frame-collage post asking X if it's right.
- * Never auto-posts — the grammar below is dead unless a card is showing.
+ * Never auto-posts — the approval grammar is dead unless a card is showing.
+ * The one exception is `parseDirectXAsk`: there the user's own "post on X"
+ * command is the approval.
  */
 
 export type PostAction = "post" | "skip" | null;
@@ -39,6 +41,36 @@ export function parsePostAction(
   if (POST_RES.some((re) => re.test(text))) return "post";
   if (SKIP_RES.some((re) => re.test(text))) return "skip";
   return null;
+}
+
+/**
+ * Direct escalation: the user explicitly asks to put the current moment on X
+ * for human eyes ("I'm not sure — post on X asking real people for
+ * verification"). Unlike the approval grammar above this needs no pending
+ * card, and the utterance itself IS the approval — the resulting card
+ * auto-posts once its collage is ready.
+ */
+export function parseDirectXAsk(message: string): boolean {
+  const t = String(message || "")
+    .toLowerCase()
+    .replace(/[’]/g, "'")
+    .replace(/[.!?]+$/g, "")
+    .trim();
+  if (!t) return false;
+  const postToX =
+    /\b(?:post|share|put)\s+(?:it\s+|this\s+|that\s+)?(?:up\s+)?(?:on|to)\s+(?:x|twitter)\b/.test(
+      t,
+    );
+  const askX = /\bask\s+(?:on\s+)?(?:x|twitter)\b/.test(t);
+  if (postToX || askX) return true;
+  // Without X named, "ask (real) people/humans" still counts when the intent
+  // is verification — never on a bare "ask people" (too collision-prone).
+  return (
+    /\bask(?:ing)?\s+(?:some\s+|the\s+|real\s+|actual\s+)*(?:people|folks|humans?)\b/.test(
+      t,
+    ) &&
+    /\b(?:verify|verification|check|confirm|right|correct|sure)\b/.test(t)
+  );
 }
 
 export type CollageCell = {
@@ -139,6 +171,23 @@ export function formatMediaTime(seconds: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/**
+ * Deterministic caption for a user-initiated ask — no failed verdict to
+ * report, just an honest request for human eyes.
+ */
+export function directAskCaption(input: {
+  question: string;
+  videoTitle: string;
+  mediaTime: number;
+}): string {
+  const title = input.videoTitle.trim();
+  const question = input.question.trim().replace(/[.!?]*$/, "?");
+  const base = title
+    ? `${title} @ ${formatMediaTime(input.mediaTime)} — need a human eye on this one. ${question} #Grokathon`
+    : `Need a human eye on this one. ${question} #Grokathon`;
+  return base.slice(0, 280);
+}
+
 /** Deterministic caption used whenever /api/x/caption is slow or down. */
 export function fallbackCaption(input: {
   question: string;
@@ -168,6 +217,12 @@ export type XPostCardState = {
   status: XPostCardStatus;
   /** Playhead of the unverified moment — used to de-duplicate a retry caption. */
   mediaTime: number;
+  /**
+   * Who initiated the ask. "audit" cards report a verification Grok failed;
+   * "user" cards are a direct "post on X" command — the header copy must not
+   * claim a failed verdict that never happened.
+   */
+  origin?: "audit" | "user";
   postedUrl?: string;
   error?: string;
   errorCode?: string;

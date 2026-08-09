@@ -17,7 +17,11 @@ export default function XPostCard({ card, onPost, onSkip }: Props) {
   return (
     <div className="xpost-card" role="status" aria-live="polite">
       <div className="xpost-head">
-        <span className="xpost-kicker">✕ couldn't verify — ask X?</span>
+        <span className="xpost-kicker">
+          {card.origin === "user"
+            ? "✕ asking X — human check"
+            : "✕ couldn't verify — ask X?"}
+        </span>
         <button
           type="button"
           className="xpost-close"

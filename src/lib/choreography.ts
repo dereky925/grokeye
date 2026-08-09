@@ -35,7 +35,10 @@ export type CatalogMotionCue = {
    * trimmed arrow between the outline and destination centers.
    */
   motionPath: string;
-  /** Legacy interior details — no longer rendered (simple-polygon overlay). */
+  /**
+   * Interior detail strokes. Rendered only inside the hero ghost
+   * (gpu-seat-card); legacy data for every other cue.
+   */
   detailPaths?: string[];
   /** Label position in the authored 1280 × 720 plane. */
   labelAt: [number, number];
@@ -273,10 +276,41 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
   {
     id: "gpu-seat-card",
     videoId: "pov-pc-build-gpu",
-    // Ask window opens at 1:04, right after the slot covers are out — the card
-    // is in hand at the case from then on (the rehearsed 1:05–1:15 money shot).
-    // Silhouettes are traced at previewAt; the player snaps there.
+    // Ask window opens at 1:04, right after the slot covers are out. Anchored
+    // on the 1:31.5 frame — the card held fan-side to camera at the case, the
+    // rehearsed "where do I put this?" beat — so the previewAt snap from a
+    // ~1:31 ask is imperceptible instead of a visible 9 s skip. Asks after
+    // 1:36 fall to the `gpu-seat-card-late` twin (old edge-on anchor).
     start: 64,
+    end: 96,
+    previewAt: 91.5,
+    scene: "The XFX graphics card is held up at the open case, about to be lowered onto the PCIe x16 slot.",
+    subject: "graphics card",
+    note: "Trace → lower onto the PCIe slot",
+    label: "Seat it level in the slot",
+    mode: "translate",
+    outline:
+      "M 504 303 L 1041 335 Q 1055 337 1056 350 L 1071 477 Q 1072 490 1058 489 L 524 470 Q 511 469 510 456 L 492 317 Q 491 304 504 303 Z",
+    destination:
+      "M 452 448 L 866 456 Q 876 457 875 466 L 872 494 Q 871 503 861 502 L 456 490 Q 447 489 447 480 L 445 455 Q 445 448 452 448 Z",
+    motionPath: "M 780 400 C 740 430 700 455 660 475",
+    // The card's three fans + hub medallions — drawn inside the hero ghost.
+    detailPaths: [
+      "M 521 402 A 78 78 0 1 0 677 402 A 78 78 0 1 0 521 402",
+      "M 699 405 A 77 77 0 1 0 853 405 A 77 77 0 1 0 699 405",
+      "M 873 414 A 76 76 0 1 0 1025 414 A 76 76 0 1 0 873 414",
+      "M 583 402 A 16 16 0 1 0 615 402 A 16 16 0 1 0 583 402 M 760 405 A 16 16 0 1 0 792 405 A 16 16 0 1 0 760 405 M 933 414 A 16 16 0 1 0 965 414 A 16 16 0 1 0 933 414",
+    ],
+    // On the white case top — clear of the card, slot band, and status chip.
+    labelAt: [755, 205],
+    keywords: ["gpu", "graphics", "card", "pcie", "seat", "install", "slot"],
+  },
+  {
+    id: "gpu-seat-card-late",
+    videoId: "pov-pc-build-gpu",
+    // Edge-on twin for asks after 1:36 — silhouettes traced on the 1:40
+    // seating frame (the original anchor).
+    start: 96,
     end: 114,
     previewAt: 100,
     scene: "The XFX graphics card is aligned with the PCIe x16 slot and rear bracket, then seated evenly.",
@@ -293,7 +327,9 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
       "M 374 431 L 927 435",
       "M 404 383 L 404 448 M 890 390 L 890 451",
     ],
-    labelAt: [710, 330],
+    // Above-right of the card, on the plain case panel — clear of both the
+    // source outline and the dashed slot target.
+    labelAt: [1005, 296],
     keywords: ["gpu", "graphics", "card", "pcie", "seat", "install", "slot"],
   },
   {
@@ -356,7 +392,10 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
   {
     id: "ikea-place-leg-frame",
     videoId: "ikea",
-    start: 4.8,
+    // Ask window opens at 4.3 — the leg is in hand from ~4.3 and the
+    // rehearsed "where to put?" ask lands around 4.8–5.2; the player snaps
+    // to the traced 6.0 frame either way.
+    start: 4.3,
     end: 8.15,
     previewAt: 6,
     scene: "The second white rectangular desk end/leg frame is held beside the free short end of the upside-down desktop; the matching end frame is already installed at the far end.",
@@ -369,7 +408,9 @@ export const CATALOG_MOTION_CUES: readonly CatalogMotionCue[] = [
     destination:
       "M 526 360 L 548 341 L 615 420 L 657 470 L 718 545 Q 725 552 725 559 L 723 569 Q 720 577 710 578 Q 700 579 695 571 L 692 563 L 643 508 L 582 434 L 552 397 L 533 372 Z M 566 386 L 580 374 L 698 516 L 686 530 Z",
     motionPath: "M 455 370 C 535 372 585 408 622 448",
-    labelAt: [770, 470],
+    // On the desktop wood right of the seat target, clear of the
+    // right-docked pamphlet the rehearsed flow keeps open.
+    labelAt: [700, 472],
     keywords: [
       "leg",
       "legs",
@@ -504,8 +545,16 @@ export function findCatalogChoreography(
     /\b(?:this|that|these|those|the|my|our)\s+(?!(?:one|thing|object|part|piece|stuff|way|around|over|under|up|down|left|right|in|out|into|onto|away|here|there|clockwise|counterclockwise|go|goes|fit|fits|sit|sits|attach|attaches|connect|connects|mount|mounts|belong|belongs|plug|plugs)\b)[a-z][\w-]*/i.test(
       message,
     );
+  // An objectless placement ask ("where to put", "where do I put") is as
+  // grounded as a pronoun — the object is whatever is in the worker's hands.
+  const objectlessPlacement =
+    /\bwhere\s+(?:(?:do|does|should|can|would)\s+(?:i|we|you|one)|to)\s+(?:put|place|position|attach|fit|install|mount|build|assemble|connect|seat)\b/i.test(
+      message,
+    );
   const deictic =
-    /\b(this|that|it|these|those|here)\b/i.test(message) && !namedReferent;
+    (/\b(this|that|it|these|those|here)\b/i.test(message) ||
+      objectlessPlacement) &&
+    !namedReferent;
   const scoringText =
     deictic && subjectHint ? `${message} ${subjectHint}` : message;
   const best = matches
