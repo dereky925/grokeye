@@ -629,8 +629,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
     };
     audioRef.current = audio;
     setTtsAudio(audio);
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    // One beat so the reply bubble paints before audio starts. Not rAF —
+    // rAF never fires in a backgrounded tab and would hang the turn here.
+    await new Promise((r) => setTimeout(r, 50));
     try {
       await new Promise<void>((resolve, reject) => {
         const done = () => {
