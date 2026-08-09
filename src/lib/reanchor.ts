@@ -207,7 +207,12 @@ export type ReanchorLoop = {
 type LoopOptions = {
   video: HTMLVideoElement;
   tracker: HighlightTracker;
-  /** What the user asked to see, e.g. "the portafilter". */
+  /**
+   * Fallback description, used only when a label carries no text of its own.
+   * Each box is re-anchored against its OWN label text — a two-label answer
+   * ("where does this cable go?" → cable, port) would otherwise ask for the
+   * cable while sending the port's crop.
+   */
   target: string;
   /** Posts the crop and returns the box within it. */
   relocate: (crop: string, target: string) => Promise<RelocateResult>;
@@ -216,6 +221,19 @@ type LoopOptions = {
   onLost?: () => void;
   onCorrection?: (mode: Reconciliation["mode"], label: HighlightLabel) => void;
 };
+
+/**
+ * What to ask for when re-anchoring `label`. Its own text names the object the
+ * box actually contains, which is both more specific than the user's sentence
+ * and correct when several boxes are up at once.
+ */
+export function labelTarget(
+  label: { text?: string | null },
+  fallback: string,
+): string {
+  const text = (label.text ?? "").trim();
+  return text || fallback;
+}
 
 /** JPEG of `rect` taken from the live video, upscaled to CROP_W. */
 function renderCrop(
@@ -325,7 +343,7 @@ export function createReanchorLoop({
 
       lastFire = now;
       inFlight = true;
-      relocate(jpeg, target)
+      relocate(jpeg, labelTarget(label, target))
         .then((res) => {
           if (dead) return;
           if (!res.visible || !res.box) {

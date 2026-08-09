@@ -2203,6 +2203,9 @@ export default function VideoPlayer({ video, onBack }: Props) {
                 }
                 highlightHoldRef.current = shown.length > 0;
                 setHighlightSeed(frames[0] ?? null);
+                // Guidance boxes are tracked like any other, so they drift the
+                // same way. Each re-anchors against its own label text.
+                setHighlightTarget(shown.length ? (locateTarget ?? heard) : null);
                 setHighlights(shown);
                 setGuidanceCue(cue);
               })

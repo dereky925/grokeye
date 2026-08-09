@@ -6,6 +6,7 @@ let vite;
 let boxIou;
 let createFrameRing;
 let cropRectFor;
+let labelTarget;
 let mapCropBoxToFrame;
 let reconcileBox;
 
@@ -19,6 +20,7 @@ before(async () => {
     boxIou,
     createFrameRing,
     cropRectFor,
+    labelTarget,
     mapCropBoxToFrame,
     reconcileBox,
   } = await vite.ssrLoadModule("/src/lib/reanchor.ts"));
@@ -112,6 +114,23 @@ test("a degenerate correction is rejected", () => {
   ]) {
     assert.equal(reconcileBox(current, bad).mode, "hold");
   }
+});
+
+test("each box re-anchors against its own label, not one shared target", () => {
+  // A route answer puts two different objects on screen at once. Asking for
+  // the cable while sending the port's crop is the bug this guards.
+  const cable = { text: "fan cable" };
+  const port = { text: "fan header" };
+  const asked = "where does this cable go";
+  assert.equal(labelTarget(cable, asked), "fan cable");
+  assert.equal(labelTarget(port, asked), "fan header");
+  assert.notEqual(labelTarget(cable, asked), labelTarget(port, asked));
+});
+
+test("a label with no text of its own falls back to what was asked", () => {
+  assert.equal(labelTarget({}, "the portafilter"), "the portafilter");
+  assert.equal(labelTarget({ text: "   " }, "the portafilter"), "the portafilter");
+  assert.equal(labelTarget({ text: null }, "the portafilter"), "the portafilter");
 });
 
 /** Minimal canvas stand-in — the ring only ever draws into it. */
