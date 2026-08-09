@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Dashboard from "./components/Dashboard";
 import VideoPlayer from "./components/VideoPlayer";
+import { navigate } from "./lib/router";
 import type { VideoItem } from "./types";
 
 /**
@@ -59,7 +60,14 @@ export default function App() {
     <div className="app-shell">
       {!active && (
         <header className="topbar">
-          <a className="brand" href="/">
+          <a
+            className="brand"
+            href="/"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("/");
+            }}
+          >
             <img src="/assets/grok-logo.png" alt="GrokEye" />
             <div className="brand-title">GrokEye</div>
           </a>
